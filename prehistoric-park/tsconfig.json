@@ -10,6 +10,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": false,
     "skipLibCheck": true,
+    "types": ["vite/client"],
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,

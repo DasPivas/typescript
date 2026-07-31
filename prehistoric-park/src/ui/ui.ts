@@ -1,6 +1,9 @@
 import { ALL_DEFS, CATEGORY_NAMES, DEFS, PATROL_STAFF, STAFF } from '../core/catalog';
 import { fairPrice, serveNeed, type Game } from '../core/game';
-import { LEVELS } from '../core/levels';
+import { LEVELS, levelUnlocked } from '../core/levels';
+import { ACHIEVEMENTS, achievementDone } from '../core/achievements';
+import { SEASON_NAME, WEATHER_ICON, WEATHER_NAME } from '../core/weather';
+import type { Profile } from '../core/save';
 import { TUTORIAL, type TutorialStep } from '../core/tutorial';
 import { sound } from '../audio/sound';
 import type { Building, Category, Rot } from '../core/types';
@@ -19,6 +22,8 @@ export interface AppApi {
   load(): void;
   hasSave(): boolean;
   levelDone(key: string): boolean;
+  profile: Profile;
+  showSigns(on: boolean): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -64,6 +69,7 @@ export class UI {
   private modalHost = el('div');
   private picked = el('div', 'picked');
   private tutorial = el('div', 'tutorial');
+  private speed = el('div', 'speed');
   private tab: Category = 'road';
   private buildOpen = false;
 
@@ -108,6 +114,7 @@ export class UI {
         this.picked.append(img);
       }
       this.picked.append(el('b', undefined, def.name));
+      this.app.showSigns(def.sign === true);
       if (def.cat !== 'road' && def.cat !== 'decor') {
         const rot = el('button', undefined, '⟳');
         rot.onclick = () => this.app.rotate();
@@ -152,7 +159,7 @@ export class UI {
     btnMenu.onclick = () => this.openMenu();
     const spacer = el('div');
     spacer.style.flex = '1';
-    side.append(btnStaff, btnStats, btnMenu);
+    side.append(this.speed, btnStaff, btnStats, btnMenu);
     this.dock.append(btnBuild, spacer, side);
   }
 
@@ -281,13 +288,16 @@ export class UI {
     const m = el('div', 'moon');
     m.style.boxShadow = `inset ${shadow}px 0 0 0 rgba(20,15,8,.85)`;
     time.append(m, document.createTextNode(` ${g.month + 1} мес`));
-    this.hud.append(time, el('div', 'grow'));
+    const wx = el('div', 'chip', WEATHER_ICON[g.weather]);
+    wx.title = `${WEATHER_NAME[g.weather]}, ${SEASON_NAME[g.season]}`;
+    this.hud.append(time, wx);
 
-    const speed = el('div', 'speed');
+    this.speed.replaceChildren();
     for (const [label, val] of [
       ['❚❚', 0],
       ['▶', 1],
       ['▶▶', 3],
+      ['⏩', 6],
     ] as [string, number][]) {
       const on = val === 0 ? g.paused : !g.paused && g.speed === val;
       const b = el('button', on ? 'on' : undefined, label);
@@ -298,9 +308,8 @@ export class UI {
           g.speed = val;
         }
       };
-      speed.append(b);
+      this.speed.append(b);
     }
-    this.hud.append(speed);
 
     // подсказки
     this.toasts.replaceChildren();
@@ -529,10 +538,86 @@ export class UI {
         this.app.load();
         this.closeModal();
       }],
+      ['задания', () => this.openAchievements()],
+      ['рекорды', () => this.openRecords()],
       ['помощь', () => this.openHelp()],
       ['уровни', () => this.openLevels()],
       ['закрыть', () => this.closeModal()],
     ]);
+  }
+
+  openAchievements(): void {
+    const g = this.app.game;
+    const body = el('div');
+    const earned = new Set(this.app.profile.achievements);
+    for (const a of ACHIEVEMENTS) {
+      const now = a.progress(g);
+      const ok = earned.has(a.key) || achievementDone(a, g);
+      const row = el('div', 'row');
+      row.innerHTML =
+        `<span>${ok ? '✔ ' : ''}${a.name}<br><small style="opacity:.7">${a.desc}</small></span>`;
+      const bar = el('div', 'bar');
+      const fill = el('i');
+      fill.style.width = `${Math.min(100, (now / a.target) * 100)}%`;
+      if (ok) fill.style.background = '#f5cf3d';
+      bar.append(fill);
+      row.append(bar);
+      body.append(row);
+    }
+    this.modal('задания', body, [['закрыть', () => this.closeModal()]]);
+  }
+
+  openRecords(): void {
+    const body = el('div');
+    const recs = [...this.app.profile.records].sort((a, b) => b.money - a.money).slice(0, 12);
+    if (!recs.length) body.append(el('p', undefined, 'Пока пусто. Пройдите уровень — запись появится здесь.'));
+    for (const r of recs) {
+      const level = LEVELS.find((l) => l.key === r.level)?.name ?? r.level;
+      body.append(
+        el(
+          'div',
+          'row',
+          `<span>${'★'.repeat(r.stars)} ${level}<br><small style="opacity:.7">${r.months} мес · рейтинг ${Math.round(r.rating)}</small></span><b>${Math.round(r.money)}</b>`,
+        ),
+      );
+    }
+    this.modal('рекорды', body, [['закрыть', () => this.closeModal()]]);
+  }
+
+  /** «Изобретение!» — окно из оригинала при открытии нового аттракциона. */
+  openInvention(key: string): void {
+    const def = DEFS[key];
+    if (!def) return;
+    const body = el('div');
+    const icon = this.app.icons[key];
+    if (icon) {
+      const img = el('img');
+      img.src = icon;
+      img.style.cssText = 'width:96px;height:96px;object-fit:contain;display:block;margin:0 auto 8px';
+      body.append(img);
+    }
+    body.append(el('p', undefined, `Племя придумало новую забаву: <b>${def.name}</b>.`));
+    if (def.cat === 'ride') {
+      body.append(el('div', 'row', `<span>рейтинг</span><b>${def.rating}</b>`));
+    }
+    body.append(el('div', 'row', `<span>стоимость</span><b>${def.cost}</b>`));
+    if (def.needsMotor) body.append(el('div', 'row', '<span>нужен</span><b>диномотор</b>'));
+    if (def.needsWater) body.append(el('div', 'row', '<span>нужна</span><b>вода рядом</b>'));
+    this.modal('изобретение!', body, [['отлично', () => this.closeModal()]]);
+  }
+
+  /** Что накапало, пока игра была закрыта. */
+  openOffline(minutes: number, money: number): void {
+    const body = el('div');
+    body.append(
+      el(
+        'p',
+        undefined,
+        `Пока вас не было (${minutes >= 60 ? Math.round(minutes / 60) + ' ч' : minutes + ' мин'}), парк работал сам.`,
+      ),
+    );
+    body.append(el('div', 'row', `<span>заработано</span><b>+${money}</b>`));
+    this.modal('парк не стоял', body, [['забрать', () => this.closeModal()]]);
   }
 
   openHelp(): void {
@@ -549,13 +634,17 @@ export class UI {
       this.app.startLevel(TUTORIAL.key);
     };
     body.append(tb);
+    const done = new Set(Object.keys(this.app.profile.stars));
     for (const l of LEVELS) {
-      const done = this.app.levelDone(l.key);
+      const stars = this.app.profile.stars[l.key] ?? 0;
+      const open = levelUnlocked(l.key, done);
+      const label = stars ? '★'.repeat(stars) + '☆'.repeat(3 - stars) + ' ' : open ? '' : '🔒 ';
       const b = el(
         'button',
-        done ? 'on' : undefined,
-        `${done ? '✔ ' : ''}${l.name}<small>${goalText(l.goals)}</small>`,
+        stars ? 'on' : undefined,
+        `${label}${l.name}<small>${goalText(l.goals)}</small>`,
       );
+      b.disabled = !open;
       b.onclick = () => {
         this.closeModal();
         this.app.startLevel(l.key);

@@ -2,6 +2,7 @@ import { Application, Container, Graphics, Sprite, type Texture } from 'pixi.js'
 import { DEFS } from '../core/catalog';
 import type { Game } from '../core/game';
 import { dims, doorCell, exitCell, ENTRY, MAP_H, MAP_W, type ParkMap } from '../core/grid';
+import { KINDS } from '../core/visitors';
 import type { Building, BuildingDef, Rot } from '../core/types';
 import { ALWAYS_ANIMATED, buildArt, LIFT, TILE, type Art } from './art';
 import { C } from './palette';
@@ -29,11 +30,15 @@ export class Scene {
   private peoplePool: Sprite[] = [];
   private wishPool: Sprite[] = [];
   private roadDirty = true;
+  private weatherTint = new Graphics();
+  private rain = new Graphics();
 
   cam = { x: (MAP_W * TILE) / 2, y: MAP_H * TILE - 220, zoom: 1 };
   ghost: Ghost | null = null;
   /** Подсветка зоны диномоторов при постройке техники. */
   showMotor = false;
+  /** Подсветка зоны указателей. */
+  showSigns = false;
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
     await this.app.init({
@@ -48,7 +53,7 @@ export class Scene {
 
     this.objects.sortableChildren = true;
     this.world.addChild(this.ground, this.roads, this.overlay, this.objects, this.ghostLayer);
-    this.app.stage.addChild(this.world);
+    this.app.stage.addChild(this.world, this.weatherTint, this.rain);
     this.ghostSprite.alpha = 0.75;
     this.ghostLayer.addChild(this.ghostSprite);
   }
@@ -180,26 +185,29 @@ export class Scene {
 
     for (const v of game.visitors) {
       const s = this.peoplePool[i++];
-      s.visible = v.state !== 'busy';
+      const seated = v.state === 'busy' && v.busySeat && v.busyAt !== null;
+      s.visible = v.state !== 'busy' || seated;
       if (!s.visible) continue;
+      const px = seated ? v.busyAt!.x + 0.5 : v.x;
+      const py = seated ? v.busyAt!.y + 0.7 : v.y;
       const moving = v.path.length > 0;
-      s.texture = this.art.visitor[v.tint % this.art.visitor.length][
-        moving ? frameOf(game.time + v.id) : 0
-      ];
-      s.width = 17;
-      s.height = 24;
-      s.position.set(v.x * TILE, v.y * TILE + 6);
-      s.zIndex = v.y * TILE + 2;
+      const frame = seated ? 3 : moving ? frameOf(game.time + v.id) : 0;
+      s.texture = this.art.visitor[v.tint % this.art.visitor.length][frame];
+      const scale = KINDS[v.kind].scale;
+      s.width = 17 * scale;
+      s.height = 24 * scale;
+      s.position.set(px * TILE, py * TILE + 6);
+      s.zIndex = py * TILE + 2;
       s.tint = v.state === 'fighting' ? 0xff8080 : 0xffffff;
 
-      if (showWishes && w < this.wishPool.length && v.wish !== 'happy' && v.state !== 'busy') {
+      if (showWishes && w < this.wishPool.length && v.wish !== 'happy' && !seated && v.state !== 'busy') {
         const b = this.wishPool[w++];
         b.visible = true;
         b.texture = this.art.wish[v.wish] ?? this.art.wish.sad;
         b.width = 19;
         b.height = 21;
-        b.position.set(v.x * TILE, v.y * TILE - 14);
-        b.zIndex = v.y * TILE + 3;
+        b.position.set(px * TILE, py * TILE - 14);
+        b.zIndex = py * TILE + 3;
       }
     }
     for (const st of game.staff) {
@@ -223,6 +231,15 @@ export class Scene {
         for (let x = 0; x < MAP_W; x++) {
           if (game.map.motor[game.map.idx(x, y)]) {
             this.overlay.rect(x * TILE, y * TILE, TILE, TILE).fill({ color: 0x7ce0ff, alpha: 0.16 });
+          }
+        }
+      }
+    }
+    if (this.showSigns) {
+      for (let y = 0; y < MAP_H; y++) {
+        for (let x = 0; x < MAP_W; x++) {
+          if (game.map.signage[game.map.idx(x, y)]) {
+            this.overlay.rect(x * TILE, y * TILE, TILE, TILE).fill({ color: 0xffe07c, alpha: 0.14 });
           }
         }
       }
@@ -268,7 +285,33 @@ export class Scene {
     this.syncBuildings(game);
     this.syncPeople(game);
     this.syncOverlay(game);
+    this.syncWeather(game);
     this.applyCamera();
+  }
+
+  /** Погода рисуется поверх мира, в экранных координатах. */
+  private syncWeather(game: Game): void {
+    const W = this.screenW;
+    const H = this.screenH;
+    const tint: Record<string, [number, number]> = {
+      clear: [0xffffff, 0],
+      rain: [0x2b4a70, 0.24],
+      cold: [0xcfe6ff, 0.16],
+      heat: [0xff9a3c, 0.12],
+    };
+    const [color, alpha] = tint[game.weather] ?? [0xffffff, 0];
+    this.weatherTint.clear();
+    if (alpha > 0) this.weatherTint.rect(0, 0, W, H).fill({ color, alpha });
+
+    this.rain.clear();
+    if (game.weather !== 'rain') return;
+    const t = game.time * 60;
+    for (let i = 0; i < 70; i++) {
+      const x = (i * 137.5 + t * 1.4) % (W + 40) - 20;
+      const y = (i * 71.3 + t * 6) % (H + 40) - 20;
+      this.rain.moveTo(x, y).lineTo(x - 4, y + 14);
+    }
+    this.rain.stroke({ width: 1.4, color: 0xbcd8ff, alpha: 0.5 });
   }
 
   applyCamera(): void {

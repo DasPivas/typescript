@@ -27,6 +27,12 @@ type Draw = (g: Graphics, w: number, h: number, t: number) => void;
 
 /** Сколько кадров печь для постройки. 1 — статичная картинка. */
 const FRAMES: Record<string, number> = {
+  vyshka: 6,
+  katapulta: 6,
+  vodnaya_gorka: 6,
+  vodnaya_dorozhka: 8,
+  supergorki: 8,
+  megagorki: 8,
   karusel: 8,
   koleso: 8,
   kacheli: 6,
@@ -112,6 +118,37 @@ function hut(g: Graphics, w: number, h: number, roof: number): void {
   g.roundRect(w * 0.12, h * 0.45, w * 0.76, h * 0.5, 4).fill(C.wood).stroke(line);
   g.poly([w * 0.04, h * 0.5, w * 0.5, h * 0.08, w * 0.96, h * 0.5]).fill(roof).stroke(line);
   g.rect(w * 0.4, h * 0.62, w * 0.2, h * 0.33).fill(C.woodDark);
+}
+
+/** Общая рисовалка горок: опоры, петля рельсов и бегущая вагонетка. */
+function coaster(g: Graphics, w: number, h: number, t: number, cart: number, posts: number): void {
+  base(g, w, h, C.grass2);
+  for (let i = 0; i < posts; i++) {
+    const x = w * (0.1 + (i * 0.8) / (posts - 1));
+    g.moveTo(x, h * 0.95).lineTo(x, h * 0.35).stroke({ width: 3, color: C.wood });
+  }
+  const p0 = [w * 0.05, h * 0.6];
+  const p1 = [w * 0.32, h * 0.02];
+  const p2 = [w * 0.6, h * 0.82];
+  const p3 = [w * 0.97, h * 0.24];
+  g.moveTo(p0[0], p0[1]).bezierCurveTo(p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]);
+  g.stroke({ width: 6, color: C.woodDark });
+  g.moveTo(p0[0], p0[1] + h * 0.07).bezierCurveTo(
+    p1[0],
+    p1[1] + h * 0.07,
+    p2[0],
+    p2[1] + h * 0.07,
+    p3[0],
+    p3[1] + h * 0.07,
+  );
+  g.stroke({ width: 3, color: C.wood });
+  const bez = (u: number, a: number, b: number, c: number, d: number) => {
+    const k = 1 - u;
+    return k * k * k * a + 3 * k * k * u * b + 3 * k * u * u * c + u * u * u * d;
+  };
+  const cx = bez(t, p0[0], p1[0], p2[0], p3[0]);
+  const cy = bez(t, p0[1], p1[1], p2[1], p3[1]);
+  g.roundRect(cx - w * 0.045, cy - h * 0.08, w * 0.09, h * 0.08, 3).fill(cart).stroke(line);
 }
 
 const BUILDING_DRAW: Record<string, Draw> = {
@@ -232,6 +269,75 @@ const BUILDING_DRAW: Record<string, Draw> = {
     const cy = bez(t, h * 0.58, h * 0.06, h * 0.76, h * 0.32);
     g.roundRect(cx - w * 0.06, cy - h * 0.09, w * 0.13, h * 0.09, 3).fill(C.red).stroke(line);
   },
+
+  vesy: (g, w, h) => {
+    base(g, w, h, C.grass2);
+    g.moveTo(w * 0.5, h * 0.9).lineTo(w * 0.5, h * 0.42).stroke({ width: 3, color: C.wood });
+    g.moveTo(w * 0.2, h * 0.44).lineTo(w * 0.8, h * 0.4).stroke({ width: 3, color: C.woodDark });
+    g.circle(w * 0.22, h * 0.5, w * 0.09).fill(C.rock).stroke(line);
+    g.circle(w * 0.78, h * 0.46, w * 0.07).fill(C.bone).stroke(line);
+  },
+  vyshka: (g, w, h, t) => {
+    base(g, w, h, C.grass2);
+    g.poly([w * 0.26, h * 0.95, w * 0.4, h * 0.22, w * 0.6, h * 0.22, w * 0.74, h * 0.95])
+      .fill(C.wood)
+      .stroke(line);
+    g.moveTo(w * 0.32, h * 0.6).lineTo(w * 0.68, h * 0.6).stroke({ width: 2, color: C.woodDark });
+    g.roundRect(w * 0.34, h * 0.16, w * 0.32, h * 0.07, 2).fill(C.woodDark).stroke(line);
+    // Прыгун летит вниз и всплывает брызгами.
+    const p = t;
+    if (p < 0.7) {
+      g.circle(w * 0.5, h * (0.14 + p * 1.05), w * 0.07).fill(C.skin).stroke({ width: 1.2, color: C.outline });
+    } else {
+      const s2 = (p - 0.7) / 0.3;
+      g.ellipse(w * 0.5, h * 0.92, w * (0.1 + s2 * 0.22), h * 0.05).stroke({
+        width: 2,
+        color: C.waterLight,
+        alpha: 1 - s2,
+      });
+    }
+  },
+  katapulta: (g, w, h, t) => {
+    base(g, w, h, C.woodDark);
+    g.roundRect(w * 0.14, h * 0.68, w * 0.72, h * 0.16, 3).fill(C.wood).stroke(line);
+    const a = -0.9 + Math.sin(t * Math.PI * 2) * 0.9;
+    const ax = w * 0.3 + Math.cos(a) * w * 0.52;
+    const ay = h * 0.68 + Math.sin(a) * h * 0.5;
+    g.moveTo(w * 0.3, h * 0.68).lineTo(ax, ay).stroke({ width: 5, color: C.woodDark });
+    g.circle(ax, ay, w * 0.09).fill(C.fur).stroke(line);
+  },
+  vodnaya_gorka: (g, w, h, t) => {
+    g.ellipse(w / 2, h - 5, w * 0.42, h * 0.1).fill({ color: C.shadow, alpha: 0.2 });
+    g.ellipse(w * 0.5, h * 0.82, w * 0.44, h * 0.14).fill(C.water).stroke(line);
+    g.moveTo(w * 0.24, h * 0.9).lineTo(w * 0.34, h * 0.2).stroke({ width: 4, color: C.wood });
+    g.moveTo(w * 0.34, h * 0.18)
+      .bezierCurveTo(w * 0.62, h * 0.22, w * 0.55, h * 0.62, w * 0.72, h * 0.78)
+      .stroke({ width: 8, color: C.waterLight });
+    const p = t;
+    const bx = w * (0.34 + p * 0.38);
+    const by = h * (0.2 + p * p * 0.58);
+    g.circle(bx, by, w * 0.06).fill(C.skin).stroke({ width: 1.2, color: C.outline });
+  },
+  vodnaya_dorozhka: (g, w, h, t) => {
+    g.ellipse(w / 2, h - 4, w * 0.46, h * 0.09).fill({ color: C.shadow, alpha: 0.18 });
+    g.roundRect(w * 0.04, h * 0.42, w * 0.92, h * 0.46, 8).fill(C.water).stroke(line);
+    g.roundRect(w * 0.08, h * 0.5, w * 0.84, h * 0.12, 6).fill(C.waterLight);
+    const bx = w * (0.1 + t * 0.78);
+    g.roundRect(bx, h * 0.56, w * 0.13, h * 0.2, 4).fill(C.wood).stroke(line);
+    g.circle(bx + w * 0.065, h * 0.54, w * 0.045).fill(C.skin).stroke({ width: 1.2, color: C.outline });
+  },
+  supergorki: (g, w, h, t) => coaster(g, w, h, t, C.cloth, 5),
+  megagorki: (g, w, h, t) => coaster(g, w, h, t, 0x7d4bb0, 6),
+  ukazatel: (g, w, h) => {
+    g.ellipse(w / 2, h * 0.92, w * 0.2, h * 0.05).fill({ color: C.shadow, alpha: 0.18 });
+    g.moveTo(w * 0.5, h * 0.92).lineTo(w * 0.5, h * 0.3).stroke({ width: 3, color: C.wood });
+    g.poly([w * 0.16, h * 0.36, w * 0.62, h * 0.36, w * 0.62, h * 0.5, w * 0.16, h * 0.5])
+      .fill(C.bone)
+      .stroke(line);
+    g.poly([w * 0.84, h * 0.54, w * 0.4, h * 0.54, w * 0.4, h * 0.68, w * 0.84, h * 0.68])
+      .fill(C.cloth2)
+      .stroke(line);
+  },
   istochnik: (g, w, h, t) => {
     g.ellipse(w / 2, h * 0.62, w * 0.36, h * 0.28).fill(C.rock).stroke(line);
     g.ellipse(w / 2, h * 0.6, w * 0.24, h * 0.18).fill(C.water);
@@ -347,6 +453,24 @@ const drawEntrance: Draw = (g, w, h) => {
 
 function drawVisitor(tint: number, frame: number): Draw {
   return (g, w, h) => {
+    if (frame === 3) {
+      // Сидит на скамейке: ноги вперёд, корпус ниже.
+      g.ellipse(w / 2, h - 1.5, w * 0.3, 1.6).fill({ color: C.shadow, alpha: 0.22 });
+      g.moveTo(w * 0.44, h * 0.82).lineTo(w * 0.74, h * 0.86);
+      g.moveTo(w * 0.56, h * 0.82).lineTo(w * 0.82, h * 0.9);
+      g.stroke({ width: 2.4, color: C.skin });
+      g.roundRect(w * 0.3, h * 0.52, w * 0.4, h * 0.32, 2)
+        .fill(tint)
+        .stroke({ width: 1.2, color: C.outline });
+      g.circle(w * 0.42, h * 0.64, 1.1).fill(C.furSpot);
+      g.circle(w * 0.5, h * 0.38, w * 0.24).fill(C.skin).stroke({ width: 1.2, color: C.outline });
+      g.moveTo(w * 0.27, h * 0.33)
+        .bezierCurveTo(w * 0.36, h * 0.13, w * 0.66, h * 0.13, w * 0.74, h * 0.33)
+        .fill(C.hair);
+      g.circle(w * 0.43, h * 0.39, 1).fill(C.outline);
+      g.circle(w * 0.58, h * 0.39, 1).fill(C.outline);
+      return;
+    }
     const swing = frame === 1 ? 1 : frame === 2 ? -1 : 0;
     g.ellipse(w / 2, h - 1.5, w * 0.3, 1.6).fill({ color: C.shadow, alpha: 0.22 });
     // ноги
@@ -465,7 +589,7 @@ export function buildArt(renderer: Renderer): Art {
     buildings[def.key] = Array.from({ length: n }, (_, i) => bake(renderer, w, h, draw, 2, i / n));
   }
 
-  const visitor = VISITOR_TINTS.map((t) => [0, 1, 2].map((f) => bake(renderer, 14, 20, drawVisitor(t, f))));
+  const visitor = VISITOR_TINTS.map((t) => [0, 1, 2, 3].map((f) => bake(renderer, 14, 20, drawVisitor(t, f))));
   const staff: Record<string, Texture> = {};
   for (const [k, c] of Object.entries(STAFF_COLORS)) staff[k] = bake(renderer, 15, 21, drawStaff(c));
 

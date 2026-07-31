@@ -11,6 +11,12 @@ export type NeedKey = 'hunger' | 'thirst' | 'bladder' | 'energy' | 'health' | 'f
 
 export type StaffKind = 'seller' | 'cook' | 'repairman' | 'guard' | 'shaman';
 
+/** Кто пришёл в парк: у детей, взрослых и стариков разные запросы. */
+export type VisitorKind = 'child' | 'adult' | 'elder';
+
+export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
+export type Weather = 'clear' | 'rain' | 'heat' | 'cold';
+
 export interface BuildingDef {
   key: string;
   name: string;
@@ -41,6 +47,12 @@ export interface BuildingDef {
   needsStaff?: StaffKind;
   /** Требует диномотор в зоне покрытия. */
   needsMotor?: boolean;
+  /** Должен примыкать к воде — водные аттракционы. */
+  needsWater?: boolean;
+  /** Указатель: в его радиусе гости видят парк дальше. */
+  sign?: boolean;
+  /** Насколько аттракцион бодрый: сильнее радует, но и выматывает. */
+  intensity?: number;
   /** Декор: прибавка к настроению в радиусе. */
   scenery?: number;
   sceneryRadius?: number;
@@ -94,6 +106,7 @@ export type VisitorState =
 
 export interface Visitor {
   id: number;
+  kind: VisitorKind;
   /** Позиция в клетках (дробная). */
   x: number;
   y: number;
@@ -119,6 +132,9 @@ export interface Visitor {
   think: number;
   /** Последняя не найденная потребность — для иконки над головой. */
   wish: NeedKey | 'happy' | 'sad' | 'leave';
+  /** Где гость занят: на скамейке его видно, внутри аттракциона — нет. */
+  busyAt: { x: number; y: number } | null;
+  busySeat: boolean;
 }
 
 export interface Staff {
@@ -150,8 +166,10 @@ export interface LevelDef {
   name: string;
   intro: string;
   money: number;
-  /** Ключи построек, доступных на уровне. */
+  /** Ключи построек, доступных с самого начала. */
   unlocked: string[];
+  /** Что изобретается по ходу уровня, в порядке открытия. */
+  inventions?: string[];
   goals: GoalSpec;
   /** Сид генератора карты. */
   seed: number;
@@ -166,4 +184,38 @@ export interface Stats {
   visitorsServed: number;
   visitorsLeftAngry: number;
   ridesTaken: number;
+  /** Пик одновременных посетителей — для заданий. */
+  peakVisitors: number;
+  fights: number;
+  breakdowns: number;
+}
+
+/** Долгое задание: считается по всем партиям сразу. */
+export interface Achievement {
+  key: string;
+  name: string;
+  desc: string;
+  /** Текущее значение и цель — чтобы рисовать прогресс. */
+  progress: (g: AchievementSource) => number;
+  target: number;
+}
+
+/** Минимум, который нужен заданиям от игры. */
+export interface AchievementSource {
+  money: number;
+  rating: number;
+  stats: Stats;
+  visitors: { length: number };
+  buildings: { key: string }[];
+  month: number;
+}
+
+/** Запись в таблице рекордов. */
+export interface ScoreRecord {
+  level: string;
+  stars: number;
+  money: number;
+  rating: number;
+  months: number;
+  at: number;
 }

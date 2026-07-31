@@ -1,29 +1,17 @@
 import { Sprite } from 'pixi.js';
 import './style/app.css';
+import { ACHIEVEMENTS, achievementDone } from './core/achievements';
 import { ALL_DEFS, DEFS } from './core/catalog';
 import { Game } from './core/game';
 import { canPlace, canPlaceRoad, ENTRY, MAP_H } from './core/grid';
 import { levelByKey, SANDBOX } from './core/levels';
+import { EMPTY_PROFILE, offlineIncome, store, type Profile, type SaveData } from './core/save';
 import { TUTORIAL, TUTORIAL_STEPS } from './core/tutorial';
-import { sound, type Sfx } from './audio/sound';
 import type { Rot } from './core/types';
+import { sound, type Sfx } from './audio/sound';
 import { Controls } from './render/input';
 import { Scene } from './render/scene';
 import { UI, type AppApi } from './ui/ui';
-
-const SAVE_KEY = 'pp.save.v1';
-const PROGRESS_KEY = 'pp.progress.v1';
-
-interface SaveData {
-  levelKey: string;
-  money: number;
-  time: number;
-  month: number;
-  roads: number[];
-  buildings: unknown[];
-  staff: unknown[];
-  stats: unknown;
-}
 
 class App implements AppApi {
   game = new Game(SANDBOX);
@@ -33,17 +21,20 @@ class App implements AppApi {
   selectedKey: string | null = null;
   removeMode = false;
   rot: Rot = 0;
-  private progress = new Set<string>();
+  profile: Profile = { ...EMPTY_PROFILE, stars: {}, achievements: [], records: [] };
+
   private uiAcc = 0;
+  private achAcc = 0;
   private lastStatus: 'playing' | 'won' | 'lost' = 'playing';
   private tutorialStep = -1;
   private tutorialHold = 0;
+  private saveTimer = 0;
 
   async start(): Promise<void> {
     const canvas = document.getElementById('stage') as HTMLCanvasElement;
     await this.scene.init(canvas);
     this.makeIcons();
-    this.loadProgress();
+    this.profile = await store.loadProfile();
 
     this.ui = new UI(document.getElementById('ui')!, this);
     new Controls(canvas, this.scene, {
@@ -54,8 +45,7 @@ class App implements AppApi {
     });
 
     // Звук нельзя завести без жеста — ловим первое касание.
-    const unlock = () => sound.unlock();
-    addEventListener('pointerdown', unlock, { capture: true });
+    addEventListener('pointerdown', () => sound.unlock(), { capture: true });
     document.getElementById('ui')!.addEventListener(
       'click',
       (e) => {
@@ -66,11 +56,39 @@ class App implements AppApi {
     );
 
     this.startLevel('tutorial');
-    if (sound.asked) this.ui.openLevels();
-    else this.ui.askSound(() => this.ui.openLevels());
+    const boot = () => void this.bootMenu();
+    if (sound.asked) boot();
+    else this.ui.askSound(boot);
 
     this.scene.app.ticker.add((t) => this.frame(t.deltaMS / 1000));
     addEventListener('contextmenu', (e) => e.preventDefault());
+    addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') this.save(true);
+    });
+    this.registerServiceWorker();
+  }
+
+  /** При запуске подхватываем последнюю партию, иначе показываем уровни. */
+  private async bootMenu(): Promise<void> {
+    const saved = await store.loadSave();
+    if (saved) {
+      this.ui.closeModal();
+      this.load(saved);
+      return;
+    }
+    this.ui.openLevels();
+  }
+
+  private registerServiceWorker(): void {
+    if (!('serviceWorker' in navigator)) return;
+    const go = () => {
+      void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {
+        /* офлайн-режим не критичен */
+      });
+    };
+    // Страница может быть уже загружена — тогда событие load не придёт.
+    if (document.readyState === 'complete') go();
+    else addEventListener('load', go);
   }
 
   /** Иконки для меню строительства — берём те же текстуры, что и на карте. */
@@ -98,71 +116,75 @@ class App implements AppApi {
   // ─────────── уровни и сохранения ───────────
 
   levelDone(key: string): boolean {
-    return this.progress.has(key);
-  }
-
-  private loadProgress(): void {
-    try {
-      const raw = localStorage.getItem(PROGRESS_KEY);
-      if (raw) this.progress = new Set(JSON.parse(raw) as string[]);
-    } catch {
-      /* пусто */
-    }
-  }
-
-  private saveProgress(): void {
-    localStorage.setItem(PROGRESS_KEY, JSON.stringify([...this.progress]));
+    return (this.profile.stars[key] ?? 0) > 0;
   }
 
   startLevel(key: string): void {
     this.game = new Game(key === 'sandbox' ? SANDBOX : levelByKey(key));
     this.game.onEvent = (e) => sound.play(e as Sfx);
-    this.tutorialStep = key === TUTORIAL.key ? 0 : -1;
-    this.tutorialHold = 0;
-    this.ui?.setTutorial(
-      this.tutorialStep >= 0 ? TUTORIAL_STEPS[0] : null,
-      0,
-      TUTORIAL_STEPS.length,
-    );
+    this.game.onInvent = (k) => {
+      this.ui.openInvention(k);
+      this.ui.renderItems();
+    };
     this.selectedKey = null;
     this.removeMode = false;
     this.rot = 0;
     this.lastStatus = 'playing';
     this.scene.ghost = null;
+    this.scene.showSigns = false;
     this.scene.reset(this.game);
+    this.setTutorial(key === TUTORIAL.key ? 0 : -1);
     this.ui?.renderItems();
+    this.ui?.renderPicked();
     this.ui?.openIntro();
   }
 
-  hasSave(): boolean {
-    return localStorage.getItem(SAVE_KEY) !== null;
+  private setTutorial(step: number): void {
+    this.tutorialStep = step;
+    this.tutorialHold = 0;
+    this.ui?.setTutorial(
+      step >= 0 && step < TUTORIAL_STEPS.length ? TUTORIAL_STEPS[step] : null,
+      Math.max(0, step),
+      TUTORIAL_STEPS.length,
+    );
   }
 
-  save(): void {
+  hasSave(): boolean {
+    return true;
+  }
+
+  save(silent = false): void {
     const g = this.game;
+    if (g.status !== 'playing') return;
     const data: SaveData = {
+      version: 2,
       levelKey: g.level.key,
       money: g.money,
       time: g.time,
       month: g.month,
       roads: Array.from(g.map.road),
-      buildings: g.buildings.map((b) => ({ ...b, queue: [], riders: [] })),
-      staff: g.staff.map((s) => ({ ...s, path: [] })),
+      buildings: g.buildings,
+      visitors: g.visitors,
+      staff: g.staff,
       stats: g.stats,
+      invented: g.invented,
+      weather: g.weather,
+      season: g.season,
+      tutorialStep: this.tutorialStep,
+      savedAt: Date.now(),
     };
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-      g.toast('игра успешно сохранена.');
-    } catch {
-      g.toast('не хватает памяти для сохранения игры.');
-    }
+    void store.saveSave(data).then((ok) => {
+      if (silent) return;
+      g.toast(ok ? 'игра успешно сохранена.' : 'не хватает памяти для сохранения игры.');
+    });
   }
 
-  load(): void {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return;
-    try {
-      const data = JSON.parse(raw) as SaveData;
+  load(preloaded?: SaveData): void {
+    const apply = (data: SaveData | null) => {
+      if (!data) {
+        this.game.toast('сохранений нет');
+        return;
+      }
       this.startLevel(data.levelKey);
       this.ui.closeModal();
       const g = this.game;
@@ -170,15 +192,27 @@ class App implements AppApi {
       g.time = data.time;
       g.month = data.month;
       g.map.road.set(data.roads);
-      g.buildings = data.buildings as typeof g.buildings;
-      g.staff = data.staff as typeof g.staff;
+      g.buildings = data.buildings;
+      g.visitors = data.visitors ?? [];
+      g.staff = data.staff;
+      g.invented = data.invented ?? [];
+      g.weather = data.weather ?? 'clear';
+      g.season = data.season ?? 'spring';
       Object.assign(g.stats, data.stats);
       g.restoreAfterLoad();
-      g.onEvent = (e) => sound.play(e as Sfx);
       this.scene.reset(g);
-    } catch {
-      this.game.toast('сохранение повреждено');
-    }
+      this.setTutorial(data.tutorialStep ?? -1);
+      this.ui.renderItems();
+
+      const bonus = offlineIncome(g.incomePerMinute, data.savedAt);
+      if (bonus.money > 0) {
+        g.money += bonus.money;
+        g.stats.income += bonus.money;
+        this.ui.openOffline(bonus.minutes, bonus.money);
+      }
+    };
+    if (preloaded) apply(preloaded);
+    else void store.loadSave().then(apply);
   }
 
   // ─────────── ввод ───────────
@@ -187,6 +221,11 @@ class App implements AppApi {
     this.selectedKey = key;
     this.scene.ghost = null;
     this.scene.showMotor = key !== null && (DEFS[key].needsMotor === true || key === 'dinomotor');
+    if (key === null) this.scene.showSigns = false;
+  }
+
+  showSigns(on: boolean): void {
+    this.scene.showSigns = on;
   }
 
   setRemoveMode(v: boolean): void {
@@ -232,10 +271,14 @@ class App implements AppApi {
     if (!key || this.removeMode) return;
     const def = DEFS[key];
     if (def.cat === 'road') {
-      this.scene.ghost = { def, x: c.x, y: c.y, rot: 0, ok: canPlaceRoad(this.game.map, c.x, c.y).ok };
-      return;
+      this.scene.ghost = {
+        def,
+        x: c.x,
+        y: c.y,
+        rot: 0,
+        ok: canPlaceRoad(this.game.map, c.x, c.y).ok,
+      };
     }
-    if (!this.scene.ghost) return; // до первого тапа призрак не показываем
   }
 
   private tap(c: { x: number; y: number }): void {
@@ -271,24 +314,58 @@ class App implements AppApi {
   private stepTutorial(dt: number): void {
     const i = this.tutorialStep;
     const step = TUTORIAL_STEPS[i];
-    const last = i === TUTORIAL_STEPS.length - 1;
-    if (last) {
+    if (!step) return;
+    if (i === TUTORIAL_STEPS.length - 1) {
       this.tutorialHold += dt;
       if (this.tutorialHold > 10) {
-        this.tutorialStep = -1;
-        this.ui.setTutorial(null, 0, 0);
-        this.progress.add(TUTORIAL.key);
-        this.saveProgress();
+        this.setTutorial(-1);
+        this.markStars(TUTORIAL.key, 1);
         this.game.toast('обучение пройдено');
       }
       return;
     }
     if (step.done(this.game)) {
-      this.tutorialStep = i + 1;
-      this.ui.setTutorial(TUTORIAL_STEPS[i + 1], i + 1, TUTORIAL_STEPS.length);
+      this.setTutorial(i + 1);
       this.game.toast('шаг пройден');
       sound.play('win');
     }
+  }
+
+  private markStars(level: string, stars: number): void {
+    this.profile.stars[level] = Math.max(this.profile.stars[level] ?? 0, stars);
+    void store.saveProfile(this.profile);
+  }
+
+  /** Задания считаются по текущей партии, но зачёт запоминается навсегда. */
+  private checkAchievements(): void {
+    let changed = false;
+    for (const a of ACHIEVEMENTS) {
+      if (this.profile.achievements.includes(a.key)) continue;
+      if (!achievementDone(a, this.game)) continue;
+      this.profile.achievements.push(a.key);
+      this.game.toast(`задание: ${a.name}`);
+      sound.play('win');
+      changed = true;
+    }
+    if (changed) void store.saveProfile(this.profile);
+  }
+
+  private finishLevel(won: boolean): void {
+    const g = this.game;
+    if (won) {
+      this.markStars(g.level.key, g.stars || 1);
+      this.profile.records.push({
+        level: g.level.key,
+        stars: g.stars || 1,
+        money: Math.round(g.money),
+        rating: Math.round(g.rating),
+        months: g.month + 1,
+        at: Date.now(),
+      });
+      this.profile.records = this.profile.records.slice(-60);
+      void store.saveProfile(this.profile);
+    }
+    this.ui.openResult(won);
   }
 
   private frame(dt: number): void {
@@ -302,13 +379,20 @@ class App implements AppApi {
       this.uiAcc = 0;
       this.ui.update();
     }
+    this.achAcc += dt;
+    if (this.achAcc > 2) {
+      this.achAcc = 0;
+      this.checkAchievements();
+    }
+    // Автосохранение раз в полминуты, чтобы офлайн-доход имел смысл.
+    this.saveTimer += dt;
+    if (this.saveTimer > 30) {
+      this.saveTimer = 0;
+      this.save(true);
+    }
     if (g.status !== 'playing' && this.lastStatus === 'playing') {
       this.lastStatus = g.status;
-      if (g.status === 'won') {
-        this.progress.add(g.level.key);
-        this.saveProgress();
-      }
-      this.ui.openResult(g.status === 'won');
+      this.finishLevel(g.status === 'won');
     }
   }
 }

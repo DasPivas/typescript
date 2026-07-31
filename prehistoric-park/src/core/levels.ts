@@ -1,7 +1,39 @@
 import { TUTORIAL } from './tutorial';
 import type { LevelDef } from './types';
 
-const BASE = ['road_dirt', 'skameyka', 'cvety', 'kust'];
+const ROADS = ['road_dirt'];
+const DECOR = ['skameyka', 'cvety', 'kust', 'ukazatel'];
+const BASE = [...ROADS, ...DECOR];
+
+/** Полный набор — им пользуются последние уровни и песочница. */
+const ALL = [
+  'road_dirt',
+  'road_stone',
+  'vesy',
+  'batut',
+  'kacheli',
+  'tir',
+  'vyshka',
+  'karusel',
+  'tarzanka',
+  'katapulta',
+  'strah',
+  'vodnaya_gorka',
+  'koleso',
+  'vodnaya_dorozhka',
+  'gorki',
+  'supergorki',
+  'megagorki',
+  'istochnik',
+  'tualet',
+  'morozh',
+  'zakusochnaya',
+  'medpunkt',
+  'dinomotor',
+  ...DECOR,
+  'derevo',
+  'palma',
+];
 
 export const LEVELS: LevelDef[] = [
   {
@@ -10,18 +42,57 @@ export const LEVELS: LevelDef[] = [
     intro:
       'Ровное место у реки. Проложи дорогу от входа, поставь пару простых аттракционов и не забудь про воду — под солнцем племя быстро мучается жаждой.',
     money: 3200,
-    unlocked: [...BASE, 'batut', 'kacheli', 'istochnik', 'tualet', 'derevo'],
+    unlocked: [...BASE, 'vesy', 'batut', 'kacheli', 'istochnik', 'tualet', 'derevo'],
+    inventions: ['tir', 'morozh'],
     goals: { money: 6500, rating: 45 },
     seed: 1207,
     water: 0.5,
     rocks: 0.3,
   },
   {
+    key: 'boloto',
+    name: 'болото',
+    intro:
+      'Воды больше, чем земли. Зато у воды можно поставить вышку — гости обожают прыгать с высоты.',
+    money: 3800,
+    unlocked: [...BASE, 'batut', 'kacheli', 'tir', 'istochnik', 'tualet', 'morozh', 'derevo'],
+    inventions: ['vyshka', 'zakusochnaya'],
+    goals: { money: 9000, rating: 50, visitorsServed: 60 },
+    seed: 5150,
+    water: 1.8,
+    rocks: 0.2,
+  },
+  {
     key: 'dinozavry',
     name: 'динозавры',
     intro:
-      'Здесь водятся ящеры покрупнее — их запрягают в диномотор. Аттракционы с шестерёнками без него не работают. И гости уже хотят есть.',
+      'Здесь водятся ящеры покрупнее — их запрягают в диномотор. Аттракционы с шестерёнками без него не работают.',
     money: 4500,
+    unlocked: [
+      ...BASE,
+      'road_stone',
+      'batut',
+      'kacheli',
+      'tir',
+      'istochnik',
+      'tualet',
+      'morozh',
+      'zakusochnaya',
+      'dinomotor',
+      'derevo',
+    ],
+    inventions: ['karusel', 'tarzanka'],
+    goals: { money: 13000, rating: 55, visitorsServed: 120 },
+    seed: 4488,
+    water: 0.8,
+    rocks: 0.6,
+  },
+  {
+    key: 'dzhungli',
+    name: 'джунгли',
+    intro:
+      'Заросли и духота. Гости пьют вдвое больше обычного, а без указателей теряются в зелени.',
+    money: 5200,
     unlocked: [
       ...BASE,
       'road_stone',
@@ -35,11 +106,13 @@ export const LEVELS: LevelDef[] = [
       'zakusochnaya',
       'dinomotor',
       'derevo',
+      'palma',
     ],
-    goals: { money: 13000, rating: 55, visitorsServed: 120 },
-    seed: 4488,
-    water: 0.8,
-    rocks: 0.6,
+    inventions: ['tarzanka', 'medpunkt', 'strah'],
+    goals: { money: 17000, rating: 58, rides: 6 },
+    seed: 6301,
+    water: 0.6,
+    rocks: 0.4,
   },
   {
     key: 'mamonty',
@@ -55,6 +128,35 @@ export const LEVELS: LevelDef[] = [
       'tir',
       'karusel',
       'tarzanka',
+      'istochnik',
+      'tualet',
+      'morozh',
+      'zakusochnaya',
+      'medpunkt',
+      'dinomotor',
+      'derevo',
+      'palma',
+    ],
+    inventions: ['strah', 'katapulta'],
+    goals: { money: 22000, rating: 65, rides: 8 },
+    seed: 9111,
+    water: 1.1,
+    rocks: 0.8,
+  },
+  {
+    key: 'poberezhye',
+    name: 'побережье',
+    intro: 'Море под боком: водная горка и водная дорожка ставятся только вплотную к воде.',
+    money: 7000,
+    unlocked: [
+      ...BASE,
+      'road_stone',
+      'batut',
+      'kacheli',
+      'tir',
+      'vyshka',
+      'karusel',
+      'tarzanka',
       'strah',
       'istochnik',
       'tualet',
@@ -65,10 +167,11 @@ export const LEVELS: LevelDef[] = [
       'derevo',
       'palma',
     ],
-    goals: { money: 22000, rating: 65, rides: 8 },
-    seed: 9111,
-    water: 1.1,
-    rocks: 0.8,
+    inventions: ['vodnaya_gorka', 'vodnaya_dorozhka'],
+    goals: { money: 27000, rating: 68, visitorsServed: 300 },
+    seed: 2077,
+    water: 2.2,
+    rocks: 0.3,
   },
   {
     key: 'plato',
@@ -84,8 +187,8 @@ export const LEVELS: LevelDef[] = [
       'tir',
       'karusel',
       'tarzanka',
+      'katapulta',
       'strah',
-      'koleso',
       'istochnik',
       'tualet',
       'morozh',
@@ -95,17 +198,17 @@ export const LEVELS: LevelDef[] = [
       'derevo',
       'palma',
     ],
-    goals: { money: 32000, rating: 72, visitorsServed: 400, months: 14 },
+    inventions: ['koleso'],
+    goals: { money: 32000, rating: 72, visitorsServed: 400, months: 16 },
     seed: 2024,
     water: 0.4,
     rocks: 1.6,
   },
   {
-    key: 'vrata',
-    name: 'врата рая',
-    intro:
-      'Последнее место. Открыты все постройки, включая горки. Собери парк, о котором будут рассказывать у костра ещё сто зим.',
-    money: 9000,
+    key: 'kanyon',
+    name: 'каньон',
+    intro: 'Узкие проходы между скал. Планировать придётся аккуратно: каждый метр на счету.',
+    money: 8200,
     unlocked: [
       ...BASE,
       'road_stone',
@@ -114,9 +217,9 @@ export const LEVELS: LevelDef[] = [
       'tir',
       'karusel',
       'tarzanka',
+      'katapulta',
       'strah',
       'koleso',
-      'gorki',
       'istochnik',
       'tualet',
       'morozh',
@@ -126,7 +229,56 @@ export const LEVELS: LevelDef[] = [
       'derevo',
       'palma',
     ],
-    goals: { money: 55000, rating: 80, months: 16 },
+    inventions: ['gorki'],
+    goals: { money: 38000, rating: 74, rides: 10, months: 18 },
+    seed: 3690,
+    water: 0.3,
+    rocks: 2.4,
+  },
+  {
+    key: 'vulkan',
+    name: 'вулкан',
+    intro: 'Жарко почти круглый год: гости пьют не переставая, зато ходят охотно.',
+    money: 9000,
+    unlocked: ALL.filter((k) => k !== 'supergorki' && k !== 'megagorki'),
+    inventions: ['supergorki'],
+    goals: { money: 45000, rating: 78, visitorsServed: 700, months: 18 },
+    seed: 1666,
+    water: 0.5,
+    rocks: 1.2,
+  },
+  {
+    key: 'lednik',
+    name: 'ледник',
+    intro:
+      'Холод гонит гостей по домам: приток вдвое ниже. Выезжать придётся на редких, но дорогих аттракционах.',
+    money: 11000,
+    unlocked: ALL.filter((k) => k !== 'megagorki'),
+    inventions: ['megagorki'],
+    goals: { money: 52000, rating: 76, months: 20 },
+    seed: 8123,
+    water: 1.4,
+    rocks: 1,
+  },
+  {
+    key: 'ohotniki',
+    name: 'угодья охотников',
+    intro: 'Богатое племя рядом: гости приходят с полными кошельками, но и требования у них выше.',
+    money: 12000,
+    unlocked: ALL,
+    goals: { money: 60000, rating: 82, visitorsServed: 1200, months: 20 },
+    seed: 4242,
+    water: 0.9,
+    rocks: 0.7,
+  },
+  {
+    key: 'vrata',
+    name: 'врата рая',
+    intro:
+      'Последнее место. Открыто всё. Собери парк, о котором будут рассказывать у костра ещё сто зим.',
+    money: 14000,
+    unlocked: ALL,
+    goals: { money: 80000, rating: 88, visitorsServed: 1500, months: 22 },
     seed: 777,
     water: 0.9,
     rocks: 0.9,
@@ -138,8 +290,8 @@ export const SANDBOX: LevelDef = {
   key: 'sandbox',
   name: 'свободная игра',
   intro: 'Без целей и ограничений. Строй что хочешь.',
-  money: 25000,
-  unlocked: LEVELS[LEVELS.length - 1].unlocked,
+  money: 30000,
+  unlocked: ALL,
   goals: {},
   seed: Math.floor(Math.random() * 100000),
   water: 0.8,
@@ -148,5 +300,13 @@ export const SANDBOX: LevelDef = {
 
 export function levelByKey(key: string): LevelDef {
   if (key === TUTORIAL.key) return TUTORIAL;
+  if (key === 'sandbox') return SANDBOX;
   return LEVELS.find((l) => l.key === key) ?? SANDBOX;
+}
+
+/** Уровень открыт, если пройден предыдущий. */
+export function levelUnlocked(key: string, done: ReadonlySet<string>): boolean {
+  const i = LEVELS.findIndex((l) => l.key === key);
+  if (i <= 0) return true;
+  return done.has(LEVELS[i - 1].key);
 }

@@ -1,4 +1,4 @@
-import { DEFS, MOTOR_RADIUS } from './catalog';
+import { DEFS, MOTOR_RADIUS, SIGN_RADIUS } from './catalog';
 import type { Building, BuildingDef, RoadKind, Rot, Terrain } from './types';
 import { mulberry32 } from './rng';
 
@@ -22,6 +22,8 @@ export class ParkMap {
   scenery: Float32Array;
   /** Покрытие диномоторами. */
   motor: Uint8Array;
+  /** Клетки, где помогает указатель. */
+  signage: Uint8Array;
 
   constructor(seed: number, water: number, rocks: number) {
     this.terrain = new Uint8Array(MAP_W * MAP_H);
@@ -29,6 +31,7 @@ export class ParkMap {
     this.occ = new Int16Array(MAP_W * MAP_H).fill(-1);
     this.scenery = new Float32Array(MAP_W * MAP_H);
     this.motor = new Uint8Array(MAP_W * MAP_H);
+    this.signage = new Uint8Array(MAP_W * MAP_H);
     this.generate(seed, water, rocks);
   }
 
@@ -168,6 +171,29 @@ export function exitRoad(
   return roadNextTo(map, e);
 }
 
+/** Есть ли вода вплотную к постройке — для водных аттракционов. */
+export function touchesWater(
+  map: ParkMap,
+  def: BuildingDef,
+  x: number,
+  y: number,
+  rot: Rot,
+): boolean {
+  for (const c of cellsOf(def, x, y, rot)) {
+    for (const [dx, dy] of [
+      [0, -1],
+      [1, 0],
+      [0, 1],
+      [-1, 0],
+    ]) {
+      const nx = c.x + dx;
+      const ny = c.y + dy;
+      if (map.inside(nx, ny) && map.terrain[map.idx(nx, ny)] === 1) return true;
+    }
+  }
+  return false;
+}
+
 export function hasMotor(map: ParkMap, def: BuildingDef, x: number, y: number, rot: Rot): boolean {
   for (const c of cellsOf(def, x, y, rot)) {
     if (map.inside(c.x, c.y) && map.motor[map.idx(c.x, c.y)] > 0) return true;
@@ -200,6 +226,9 @@ export function canPlace(
   if (def.needsMotor && !hasMotor(map, def, x, y, rot)) {
     return { ok: false, reason: 'нужен диномотор' };
   }
+  if (def.needsWater && !touchesWater(map, def, x, y, rot)) {
+    return { ok: false, reason: 'нужна вода рядом' };
+  }
   return { ok: true };
 }
 
@@ -226,6 +255,7 @@ export function unstamp(map: ParkMap, b: Building): void {
 export function recalcFields(map: ParkMap, buildings: Building[]): void {
   map.scenery.fill(0);
   map.motor.fill(0);
+  map.signage.fill(0);
   for (const b of buildings) {
     const def = DEFS[b.key];
     if (def.scenery) {
@@ -236,6 +266,15 @@ export function recalcFields(map: ParkMap, buildings: Building[]): void {
           const d = Math.hypot(x - b.x, y - b.y);
           if (d > r) continue;
           map.scenery[map.idx(x, y)] += def.scenery * (1 - d / (r + 1));
+        }
+      }
+    }
+    if (def.sign) {
+      const r = SIGN_RADIUS;
+      for (let y = b.y - r; y <= b.y + r; y++) {
+        for (let x = b.x - r; x <= b.x + r; x++) {
+          if (!map.inside(x, y)) continue;
+          if (Math.hypot(x - b.x, y - b.y) <= r) map.signage[map.idx(x, y)] = 1;
         }
       }
     }
