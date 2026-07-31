@@ -55,7 +55,8 @@ const BARK: RGB = [96, 70, 44];
 const THATCH: RGB = [188, 150, 78];
 const LEAF: RGB = [62, 116, 44];
 const LEAF_D: RGB = [38, 76, 32];
-const LEAF_L: RGB = [110, 162, 60];
+const LEAF_L: RGB = [124, 176, 66];
+const LEAF_HL: RGB = [154, 200, 84];
 const DIRT: RGB = [158, 118, 72];
 const SAND: RGB = [198, 162, 102];
 const STONE: RGB = [142, 136, 124];
@@ -125,7 +126,7 @@ function leafAlbedo(seed = 5): (u: number, v: number) => RGB {
     const n = fbm(u * 7, v * 7, 128, 4, seed);
     const c = mix(LEAF_D, LEAF_L, n);
     // Снизу кроны темнее — свет не доходит.
-    const k = 0.82 + (1 - v) * 0.3;
+    const k = 0.92 + (1 - v) * 0.3;
     return [c[0] * k, c[1] * k, c[2] * k];
   };
 }
@@ -383,147 +384,373 @@ interface SpriteDef {
 
 const TAU = Math.PI * 2;
 
+// ───────────────────────── детали растительности ─────────────────────────
+
+/**
+ * Крона из отдельных листьев: сначала тёмный объём, поверх — россыпь листьев,
+ * повёрнутых наружу. Ближе к свету листья светлее, по силуэту торчат — крона
+ * получается рыхлой, а не бильярдным шаром.
+ */
+function leafCluster(
+  p: Painter,
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  seed: number,
+  density = 1,
+): void {
+  ball(p, cx, cy, rx * 0.94, ry * 0.94, LEAF_D, {
+    albedo: leafAlbedo(seed),
+    ambient: 0.4,
+    flat: 0.9,
+  });
+  const n = Math.max(9, Math.round(rx * ry * 0.62 * density));
+  for (let i = 0; i < n; i++) {
+    const a = noise(i * 1.7 + 0.3, seed, 128, 1) * TAU;
+    // Корень из равномерной величины — листья ложатся по площади, а не в центр.
+    const rr = 0.35 + Math.sqrt(noise(i * 2.3, seed, 128, 2)) * 0.7;
+    const lx = cx + Math.cos(a) * rx * rr;
+    const ly = cy + Math.sin(a) * ry * rr;
+    // Насколько лист повёрнут к солнцу.
+    const toLight = -(Math.cos(a) * 0.42 + Math.sin(a) * 0.66);
+    const tone = 0.48 + toLight * 0.34 + noise(i * 3.7, seed, 128, 3) * 0.3;
+    const len = rx * (0.24 + noise(i * 4.1, seed, 128, 4) * 0.16);
+    const tilt = a + (noise(i * 5.3, seed, 128, 5) - 0.5) * 1.2;
+    capsule(
+      p,
+      lx - Math.cos(tilt) * len * 0.4,
+      ly - Math.sin(tilt) * len * 0.4,
+      lx + Math.cos(tilt) * len * 0.6,
+      ly + Math.sin(tilt) * len * 0.6,
+      rx * 0.13,
+      LEAF,
+      {
+        albedo: () => {
+          const k = Math.max(0, Math.min(1, tone));
+          // Самые освещённые листья уходят в светлый оттенок, а не упираются в потолок.
+          return k > 0.72 ? mix(LEAF_L, LEAF_HL, (k - 0.72) / 0.28) : mix(LEAF_D, LEAF_L, k / 0.72);
+        },
+        ambient: 0.48,
+        rim: 0.18,
+        spec: 0.07,
+        shine: 9,
+      },
+    );
+  }
+}
+
+/** Ствол с утолщением книзу: несколько капсул по кривой. */
+function trunk(
+  p: Painter,
+  pts: number[][],
+  r0: number,
+  r1: number,
+  color: RGB = BARK,
+): void {
+  for (let i = 1; i < pts.length; i++) {
+    const t = i / (pts.length - 1);
+    capsule(p, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], r0 + (r1 - r0) * t, color, {
+      albedo: woodGrain(color, 5),
+      ambient: 0.33,
+      rim: 0.1,
+    });
+  }
+}
+
+/** Пальмовый лист: черешок с листочками по обе стороны. */
+function palmFrond(
+  p: Painter,
+  from: number[],
+  ctrl: number[],
+  to: number[],
+  size: number,
+  seed: number,
+): void {
+  const pts = bezier(from, ctrl, [ (ctrl[0] + to[0]) / 2, (ctrl[1] + to[1]) / 2 ], to, 9);
+  polyline(p, pts, size * 0.035, LEAF_D, { ambient: 0.34 });
+  for (let i = 1; i < pts.length; i++) {
+    const t = i / (pts.length - 1);
+    const [px, py] = pts[i];
+    const [qx, qy] = pts[i - 1];
+    const ang = Math.atan2(py - qy, px - qx);
+    // Листочки длиннее в середине черешка и короче к кончику.
+    const len = size * 0.3 * Math.sin(Math.min(1, t * 1.15) * Math.PI) + size * 0.05;
+    for (const side of [-1, 1]) {
+      const a = ang + side * (0.95 + t * 0.4);
+      capsule(p, px, py, px + Math.cos(a) * len, py + Math.sin(a) * len, size * 0.045, LEAF, {
+        albedo: () => mix(LEAF_D, LEAF_L, 0.35 + t * 0.35 + noise(i, seed + side, 64, 6) * 0.25),
+        ambient: 0.36,
+        rim: 0.14,
+      });
+    }
+  }
+}
+
+/** Цветок: лепестки-капсулы вокруг серединки, плюс тычинки. */
+function flower(p: Painter, cx: number, cy: number, r: number, col: RGB, seed: number): void {
+  const petals = 6;
+  for (let i = 0; i < petals; i++) {
+    const a = (i / petals) * TAU + seed;
+    capsule(
+      p,
+      cx + Math.cos(a) * r * 0.3,
+      cy + Math.sin(a) * r * 0.24,
+      cx + Math.cos(a) * r,
+      cy + Math.sin(a) * r * 0.82,
+      r * 0.36,
+      col,
+      { ambient: 0.5, rim: 0.16, spec: 0.06, shine: 10 },
+    );
+  }
+  ball(p, cx, cy, r * 0.4, r * 0.34, [244, 216, 118], { ambient: 0.6, spec: 0.25, shine: 16 });
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + seed * 2;
+    ball(p, cx + Math.cos(a) * r * 0.18, cy + Math.sin(a) * r * 0.14, r * 0.07, r * 0.06, [150, 104, 40], {
+      ambient: 0.7,
+    });
+  }
+}
+
+/** Пучок травы — им «приземляем» деревья и кусты. */
+function tuft(p: Painter, cx: number, cy: number, size: number, seed: number): void {
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + (noise(i, seed, 64, 7) - 0.5) * 1.9;
+    capsule(p, cx, cy, cx + Math.cos(a) * size, cy + Math.sin(a) * size, size * 0.12, LEAF, {
+      albedo: () => mix([76, 118, 48], LEAF_L, noise(i * 2, seed, 64, 8)),
+      ambient: 0.46,
+    });
+  }
+}
+
+
 const SPRITES: Record<string, SpriteDef> = {
   // ── растительность ──
   derevo: {
     base: (p, w, h) => {
-      shadow(p, w * 0.5, h * 0.93, w * 0.34, h * 0.07);
-      capsule(p, w * 0.5, h * 0.95, w * 0.47, h * 0.5, w * 0.075, BARK, {
-        albedo: woodGrain(BARK, 6),
-        ambient: 0.34,
-        rim: 0.1,
-      });
-      capsule(p, w * 0.48, h * 0.62, w * 0.34, h * 0.5, w * 0.035, BARK, { ambient: 0.34 });
-      const crown: number[][] = [
-        [0.5, 0.36, 0.3],
-        [0.32, 0.45, 0.2],
-        [0.68, 0.44, 0.21],
-        [0.42, 0.26, 0.19],
-        [0.62, 0.29, 0.17],
-      ];
-      for (const [ux, uy, r] of crown) {
-        ball(p, w * ux, h * uy, w * r, h * r * 0.82, LEAF, {
-          albedo: leafAlbedo(ux * 31 + uy * 7),
-          ambient: 0.34,
-          rim: 0.14,
-          spec: 0.05,
-          shine: 8,
+      shadow(p, w * 0.52, h * 0.94, w * 0.36, h * 0.07);
+      // Корни у основания.
+      for (const [dx, dy] of [
+        [-0.14, 0.02],
+        [0.13, 0.03],
+        [-0.05, 0.05],
+      ]) {
+        capsule(p, w * 0.5, h * 0.9, w * (0.5 + dx), h * (0.95 + dy), w * 0.035, BARK, {
+          albedo: woodGrain(BARK, 4),
+          ambient: 0.32,
         });
       }
-      occlude(p, 0.22);
-      contour(p, 0.35);
+      trunk(
+        p,
+        bezier([w * 0.5, h * 0.95], [w * 0.53, h * 0.8], [w * 0.45, h * 0.66], [w * 0.48, h * 0.5], 6),
+        w * 0.085,
+        w * 0.05,
+      );
+      // Две ветки в крону.
+      trunk(p, [[w * 0.48, h * 0.6], [w * 0.36, h * 0.5], [w * 0.32, h * 0.44]], w * 0.035, w * 0.018);
+      trunk(p, [[w * 0.48, h * 0.56], [w * 0.62, h * 0.47], [w * 0.66, h * 0.42]], w * 0.035, w * 0.018);
+      // Крона: тёмные нижние гроздья, светлые верхние.
+      leafCluster(p, w * 0.32, h * 0.44, w * 0.21, h * 0.16, 11);
+      leafCluster(p, w * 0.68, h * 0.42, w * 0.22, h * 0.17, 23);
+      leafCluster(p, w * 0.5, h * 0.46, w * 0.26, h * 0.19, 5);
+      leafCluster(p, w * 0.42, h * 0.28, w * 0.22, h * 0.17, 37);
+      leafCluster(p, w * 0.62, h * 0.3, w * 0.2, h * 0.15, 43);
+      leafCluster(p, w * 0.5, h * 0.22, w * 0.19, h * 0.14, 53);
+      tuft(p, w * 0.36, h * 0.95, w * 0.09, 3);
+      tuft(p, w * 0.64, h * 0.94, w * 0.08, 9);
+      occlude(p, 0.26);
+      contour(p, 0.3);
     },
   },
   palma: {
     base: (p, w, h) => {
-      shadow(p, w * 0.5, h * 0.95, w * 0.28, h * 0.05);
-      const trunk = bezier([w * 0.5, h * 0.97], [w * 0.42, h * 0.7], [w * 0.6, h * 0.5], [w * 0.5, h * 0.3], 8);
-      for (let i = 1; i < trunk.length; i++) {
-        const t = i / trunk.length;
-        capsule(p, trunk[i - 1][0], trunk[i - 1][1], trunk[i][0], trunk[i][1], w * (0.075 - t * 0.03), BARK, {
-          albedo: woodGrain(BARK, 4, 'x'),
-          ambient: 0.36,
+      shadow(p, w * 0.54, h * 0.95, w * 0.3, h * 0.055);
+      const spine = bezier([w * 0.5, h * 0.97], [w * 0.4, h * 0.72], [w * 0.62, h * 0.5], [w * 0.5, h * 0.32], 9);
+      trunk(p, spine, w * 0.085, w * 0.045);
+      // Кольца-рубцы на стволе.
+      for (let i = 1; i < spine.length - 1; i++) {
+        const [x, y] = spine[i];
+        const [qx, qy] = spine[i - 1];
+        const a = Math.atan2(y - qy, x - qx) + Math.PI / 2;
+        const r = w * (0.08 - (i / spine.length) * 0.035);
+        capsule(
+          p,
+          x - Math.cos(a) * r,
+          y - Math.sin(a) * r,
+          x + Math.cos(a) * r,
+          y + Math.sin(a) * r,
+          w * 0.012,
+          [78, 56, 34],
+          { ambient: 0.4, alpha: 0.7 },
+        );
+      }
+      const top = spine[spine.length - 1];
+      for (let i = 0; i < 7; i++) {
+        const a = Math.PI + 0.15 + (i / 6) * (Math.PI - 0.3);
+        palmFrond(
+          p,
+          top,
+          [top[0] + Math.cos(a) * w * 0.26, top[1] + Math.sin(a) * h * 0.14 - h * 0.03],
+          [top[0] + Math.cos(a) * w * 0.5, top[1] + Math.sin(a) * h * 0.16 + h * 0.14],
+          w,
+          i * 7,
+        );
+      }
+      // Кокосы.
+      for (const [dx, dy] of [
+        [-0.05, 0.03],
+        [0.05, 0.045],
+        [0, 0.07],
+      ]) {
+        ball(p, top[0] + w * dx, top[1] + h * dy, w * 0.045, h * 0.032, [128, 86, 44], {
+          ambient: 0.42,
+          rim: 0.14,
+          spec: 0.1,
+          shine: 12,
         });
       }
-      const top = trunk[trunk.length - 1];
-      for (let i = 0; i < 7; i++) {
-        const a = Math.PI + (i / 6) * Math.PI;
-        const midx = top[0] + Math.cos(a) * w * 0.22;
-        const midy = top[1] + Math.sin(a) * h * 0.12 + h * 0.02;
-        const endx = top[0] + Math.cos(a) * w * 0.46;
-        const endy = top[1] + Math.sin(a) * h * 0.13 + h * 0.16;
-        const frond = bezier(top, [midx, midy - h * 0.06], [midx, midy], [endx, endy], 7);
-        for (let k = 1; k < frond.length; k++) {
-          const t = k / frond.length;
-          capsule(p, frond[k - 1][0], frond[k - 1][1], frond[k][0], frond[k][1], w * (0.075 - t * 0.05), LEAF, {
-            albedo: leafAlbedo(i * 13),
-            ambient: 0.36,
-            rim: 0.12,
-          });
-        }
-      }
-      ball(p, top[0] - w * 0.05, top[1] + h * 0.03, w * 0.045, h * 0.03, [186, 132, 52], { ambient: 0.4 });
-      ball(p, top[0] + w * 0.06, top[1] + h * 0.04, w * 0.04, h * 0.028, [186, 132, 52], { ambient: 0.4 });
+      tuft(p, w * 0.4, h * 0.96, w * 0.08, 17);
+      occlude(p, 0.2);
       contour(p, 0.3);
     },
   },
   kust: {
     base: (p, w, h) => {
-      shadow(p, w * 0.5, h * 0.88, w * 0.34, h * 0.08);
-      for (const [ux, uy, r] of [
-        [0.36, 0.62, 0.24],
-        [0.64, 0.58, 0.26],
-        [0.5, 0.74, 0.28],
-        [0.5, 0.48, 0.2],
+      shadow(p, w * 0.5, h * 0.9, w * 0.36, h * 0.08);
+      // Веточки внутри куста.
+      for (const [dx, dy] of [
+        [-0.12, -0.16],
+        [0.1, -0.2],
+        [0, -0.24],
       ]) {
-        ball(p, w * ux, h * uy, w * r, h * r * 0.9, LEAF, {
-          albedo: leafAlbedo(ux * 17 + 3),
-          ambient: 0.36,
-          rim: 0.12,
-        });
+        capsule(p, w * 0.5, h * 0.9, w * (0.5 + dx), h * (0.9 + dy), w * 0.025, BARK, { ambient: 0.32 });
       }
-      occlude(p, 0.2);
+      leafCluster(p, w * 0.34, h * 0.66, w * 0.2, h * 0.16, 61, 1.1);
+      leafCluster(p, w * 0.66, h * 0.62, w * 0.21, h * 0.17, 71, 1.1);
+      leafCluster(p, w * 0.5, h * 0.74, w * 0.24, h * 0.17, 83, 1.1);
+      leafCluster(p, w * 0.5, h * 0.52, w * 0.2, h * 0.15, 97, 1.1);
+      // Ягоды.
+      for (let i = 0; i < 6; i++) {
+        const bx = w * (0.28 + noise(i * 2.1, 5, 64, 12) * 0.44);
+        const by = h * (0.5 + noise(i * 3.3, 6, 64, 13) * 0.28);
+        ball(p, bx, by, w * 0.035, h * 0.028, [178, 54, 58], { ambient: 0.5, rim: 0.2, spec: 0.3, shine: 20 });
+      }
+      tuft(p, w * 0.3, h * 0.92, w * 0.07, 21);
+      occlude(p, 0.22);
       contour(p, 0.3);
     },
   },
   cvety: {
     base: (p, w, h) => {
-      shadow(p, w * 0.5, h * 0.9, w * 0.3, h * 0.06, 0.25);
-      const spots: [number, number, RGB][] = [
-        [0.3, 0.55, [206, 72, 66]],
-        [0.62, 0.44, [232, 196, 72]],
-        [0.5, 0.72, [214, 108, 176]],
-        [0.74, 0.66, [236, 236, 226]],
+      shadow(p, w * 0.5, h * 0.92, w * 0.32, h * 0.06, 0.28);
+      const spots: [number, number, number, RGB][] = [
+        [0.28, 0.52, 0.13, [208, 68, 62]],
+        [0.6, 0.4, 0.12, [234, 198, 74]],
+        [0.46, 0.68, 0.14, [212, 106, 178]],
+        [0.76, 0.6, 0.11, [238, 238, 228]],
       ];
-      for (const [ux, uy, col] of spots) {
-        capsule(p, w * ux, h * 0.9, w * ux, h * uy, w * 0.03, LEAF, { ambient: 0.42 });
-        for (let i = 0; i < 5; i++) {
-          const a = (i / 5) * TAU + ux * 4;
-          ball(p, w * ux + Math.cos(a) * w * 0.1, h * uy + Math.sin(a) * h * 0.08, w * 0.075, h * 0.06, col, {
-            ambient: 0.5,
-            rim: 0.1,
+      for (const [ux, uy, r, col] of spots) {
+        const stem = bezier(
+          [w * ux, h * 0.93],
+          [w * (ux + 0.03), h * 0.78],
+          [w * (ux - 0.02), h * (uy + 0.15)],
+          [w * ux, h * uy],
+          5,
+        );
+        polyline(p, stem, w * 0.022, [86, 126, 52], { ambient: 0.42 });
+        // Листья на стебле.
+        for (const side of [-1, 1]) {
+          const sy = h * (uy + 0.2);
+          capsule(p, w * ux, sy, w * (ux + side * 0.11), sy + h * 0.03, w * 0.035, LEAF, {
+            albedo: leafAlbedo(ux * 40 + side),
+            ambient: 0.42,
+            rim: 0.12,
           });
         }
-        ball(p, w * ux, h * uy, w * 0.045, h * 0.04, [246, 226, 140], { ambient: 0.6 });
+        flower(p, w * ux, h * uy, w * r, col, ux * 7);
       }
-      contour(p, 0.25);
+      tuft(p, w * 0.5, h * 0.93, w * 0.08, 31);
+      contour(p, 0.26);
     },
   },
   skameyka: {
     base: (p, w, h) => {
-      shadow(p, w * 0.5, h * 0.8, w * 0.42, h * 0.09);
-      capsule(p, w * 0.22, h * 0.72, w * 0.28, h * 0.86, w * 0.06, WOOD_D, { ambient: 0.35 });
-      capsule(p, w * 0.78, h * 0.72, w * 0.72, h * 0.86, w * 0.06, WOOD_D, { ambient: 0.35 });
-      capsule(p, w * 0.12, h * 0.62, w * 0.88, h * 0.62, w * 0.1, WOOD, {
-        albedo: woodGrain(WOOD, 12, 'x'),
-        ambient: 0.38,
-        rim: 0.12,
-        spec: 0.06,
-        shine: 10,
+      shadow(p, w * 0.5, h * 0.84, w * 0.46, h * 0.09);
+      // Каменные опоры.
+      for (const ux of [0.2, 0.8]) {
+        ball(p, w * ux, h * 0.76, w * 0.11, h * 0.1, STONE, {
+          albedo: stoneAlbedo(STONE, ux * 9),
+          ambient: 0.38,
+          rim: 0.12,
+        });
+      }
+      // Бревно: снизу кора, сверху — гладкий срез.
+      capsule(p, w * 0.1, h * 0.63, w * 0.9, h * 0.63, h * 0.115, BARK, {
+        albedo: woodGrain(BARK, 16, 'x'),
+        ambient: 0.34,
+        rim: 0.1,
       });
+      poly(
+        p,
+        [w * 0.1, h * 0.545, w * 0.9, h * 0.545, w * 0.9, h * 0.645, w * 0.1, h * 0.645],
+        WOOD_L,
+        0,
+        -0.75,
+        0.66,
+        { albedo: woodGrain(WOOD_L, 26, 'x'), ambient: 0.5, rim: 0.12, spec: 0.08, shine: 12 },
+      );
+      // Торцы с годовыми кольцами.
+      for (const ux of [0.1, 0.9]) {
+        ball(p, w * ux, h * 0.6, w * 0.035, h * 0.09, [186, 148, 96], {
+          albedo: (u, v) => {
+            const d = Math.hypot(u * 2 - 1, v * 2 - 1);
+            const ring = Math.sin(d * 12) * 0.5 + 0.5;
+            return mix([158, 118, 68], [206, 172, 118], ring);
+          },
+          ambient: 0.5,
+          flat: 0.4,
+        });
+      }
+      occlude(p, 0.18);
       contour(p, 0.32);
     },
   },
   ukazatel: {
     base: (p, w, h) => {
-      shadow(p, w * 0.5, h * 0.92, w * 0.22, h * 0.05);
-      capsule(p, w * 0.5, h * 0.94, w * 0.5, h * 0.26, w * 0.05, WOOD, {
-        albedo: woodGrain(WOOD, 5),
-        ambient: 0.38,
+      shadow(p, w * 0.5, h * 0.93, w * 0.24, h * 0.05);
+      capsule(p, w * 0.5, h * 0.95, w * 0.5, h * 0.24, w * 0.055, BARK, {
+        albedo: woodGrain(BARK, 5),
+        ambient: 0.36,
+        rim: 0.1,
       });
-      const plank = (x0: number, y0: number, x1: number, y1: number, tip: number) => {
+      const plank = (y0: number, y1: number, x0: number, x1: number, dir: number) => {
+        const tipX = dir > 0 ? x1 + w * 0.13 : x1 - w * 0.13;
         poly(
           p,
-          [x0, y0, x1, y0, x1 + tip, (y0 + y1) / 2, x1, y1, x0, y1],
-          BONE,
-          -0.15,
-          -0.25,
+          [x0, y0, x1, y0, tipX, (y0 + y1) / 2, x1, y1, x0, y1],
+          [200, 176, 130],
+          -0.12,
+          -0.3,
           1,
-          { albedo: woodGrain([204, 182, 138], 9, 'x'), ambient: 0.5, rim: 0.1 },
+          { albedo: woodGrain([200, 176, 130], 10, 'x'), ambient: 0.5, rim: 0.12, spec: 0.05, shine: 10 },
         );
+        // Вырезанная стрелка.
+        const my = (y0 + y1) / 2;
+        const ax = dir > 0 ? x1 - w * 0.06 : x1 + w * 0.06;
+        capsule(p, (x0 + x1) / 2 - dir * w * 0.1, my, ax, my, h * 0.018, [104, 78, 44], { ambient: 0.55 });
+        capsule(p, ax - dir * w * 0.07, my - h * 0.05, ax, my, h * 0.016, [104, 78, 44], { ambient: 0.55 });
+        capsule(p, ax - dir * w * 0.07, my + h * 0.05, ax, my, h * 0.016, [104, 78, 44], { ambient: 0.55 });
       };
-      plank(w * 0.14, h * 0.3, w * 0.62, h * 0.44, w * 0.12);
-      plank(w * 0.38, h * 0.5, w * 0.86, h * 0.64, -w * 0.12);
+      plank(h * 0.28, h * 0.42, w * 0.16, w * 0.62, 1);
+      plank(h * 0.5, h * 0.64, w * 0.38, w * 0.84, -1);
+      // Обвязка лианой.
+      for (const y of [h * 0.35, h * 0.57]) {
+        capsule(p, w * 0.42, y - h * 0.01, w * 0.58, y + h * 0.01, w * 0.022, [122, 96, 52], {
+          ambient: 0.45,
+        });
+      }
+      tuft(p, w * 0.62, h * 0.94, w * 0.07, 41);
+      occlude(p, 0.18);
       contour(p, 0.3);
     },
   },
