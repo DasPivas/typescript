@@ -1,3 +1,4 @@
+import { TUTORIAL } from './tutorial';
 import type { LevelDef } from './types';
 
 const BASE = ['road_dirt', 'skameyka', 'cvety', 'kust'];
@@ -146,5 +147,6 @@ export const SANDBOX: LevelDef = {
 };
 
 export function levelByKey(key: string): LevelDef {
+  if (key === TUTORIAL.key) return TUTORIAL;
   return LEVELS.find((l) => l.key === key) ?? SANDBOX;
 }

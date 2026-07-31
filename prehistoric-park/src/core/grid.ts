@@ -86,9 +86,14 @@ export function dims(def: BuildingDef, rot: Rot): { w: number; h: number } {
   return rot % 2 === 0 ? { w: def.w, h: def.h } : { w: def.h, h: def.w };
 }
 
-/** Абсолютная клетка входа с учётом поворота. */
-export function doorCell(def: BuildingDef, x: number, y: number, rot: Rot): { x: number; y: number } {
-  const { x: dx, y: dy } = def.door;
+function rotateCell(
+  def: BuildingDef,
+  cell: { x: number; y: number },
+  x: number,
+  y: number,
+  rot: Rot,
+): { x: number; y: number } {
+  const { x: dx, y: dy } = cell;
   switch (rot) {
     case 0:
       return { x: x + dx, y: y + dy };
@@ -101,11 +106,42 @@ export function doorCell(def: BuildingDef, x: number, y: number, rot: Rot): { x:
   }
 }
 
+/** Абсолютная клетка входа с учётом поворота. */
+export function doorCell(def: BuildingDef, x: number, y: number, rot: Rot): { x: number; y: number } {
+  return rotateCell(def, def.door, x, y, rot);
+}
+
+/** Абсолютная клетка выхода (если у постройки он отдельный). */
+export function exitCell(
+  def: BuildingDef,
+  x: number,
+  y: number,
+  rot: Rot,
+): { x: number; y: number } | null {
+  if (!def.exit) return null;
+  return rotateCell(def, def.exit, x, y, rot);
+}
+
 export function cellsOf(def: BuildingDef, x: number, y: number, rot: Rot): { x: number; y: number }[] {
   const { w, h } = dims(def, rot);
   const out: { x: number; y: number }[] = [];
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) out.push({ x: x + i, y: y + j });
   return out;
+}
+
+/** Клетка дороги, примыкающая к указанной клетке (или null). */
+export function roadNextTo(
+  map: ParkMap,
+  cell: { x: number; y: number },
+): { x: number; y: number } | null {
+  const around = [
+    { x: cell.x, y: cell.y - 1 },
+    { x: cell.x + 1, y: cell.y },
+    { x: cell.x, y: cell.y + 1 },
+    { x: cell.x - 1, y: cell.y },
+  ];
+  for (const c of around) if (map.roadAt(c.x, c.y) > 0) return c;
+  return null;
 }
 
 /** Клетка дороги, к которой примыкает вход (или null). */
@@ -116,15 +152,20 @@ export function doorRoad(
   y: number,
   rot: Rot,
 ): { x: number; y: number } | null {
-  const d = doorCell(def, x, y, rot);
-  const around = [
-    { x: d.x, y: d.y - 1 },
-    { x: d.x + 1, y: d.y },
-    { x: d.x, y: d.y + 1 },
-    { x: d.x - 1, y: d.y },
-  ];
-  for (const c of around) if (map.roadAt(c.x, c.y) > 0) return c;
-  return null;
+  return roadNextTo(map, doorCell(def, x, y, rot));
+}
+
+/** Клетка дороги у выхода. Если выхода нет — это тот же вход. */
+export function exitRoad(
+  map: ParkMap,
+  def: BuildingDef,
+  x: number,
+  y: number,
+  rot: Rot,
+): { x: number; y: number } | null {
+  const e = exitCell(def, x, y, rot);
+  if (!e) return doorRoad(map, def, x, y, rot);
+  return roadNextTo(map, e);
 }
 
 export function hasMotor(map: ParkMap, def: BuildingDef, x: number, y: number, rot: Rot): boolean {
@@ -152,6 +193,9 @@ export function canPlace(
   }
   if (def.cat !== 'decor' && !doorRoad(map, def, x, y, rot)) {
     return { ok: false, reason: 'не подведена дорога ко входу' };
+  }
+  if (def.exit && !exitRoad(map, def, x, y, rot)) {
+    return { ok: false, reason: 'не подведена дорога к выходу' };
   }
   if (def.needsMotor && !hasMotor(map, def, x, y, rot)) {
     return { ok: false, reason: 'нужен диномотор' };

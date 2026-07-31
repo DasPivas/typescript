@@ -1,9 +1,9 @@
 import { Application, Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { DEFS } from '../core/catalog';
 import type { Game } from '../core/game';
-import { dims, doorCell, ENTRY, MAP_H, MAP_W, type ParkMap } from '../core/grid';
+import { dims, doorCell, exitCell, ENTRY, MAP_H, MAP_W, type ParkMap } from '../core/grid';
 import type { Building, BuildingDef, Rot } from '../core/types';
-import { buildArt, LIFT, TILE, type Art } from './art';
+import { ALWAYS_ANIMATED, buildArt, LIFT, TILE, type Art } from './art';
 import { C } from './palette';
 
 export interface Ghost {
@@ -109,10 +109,10 @@ export class Scene {
     for (const b of game.buildings) {
       seen.add(b.id);
       let s = this.buildingSprites.get(b.id);
+      const frames = this.art.buildings[b.key];
+      if (!frames) continue;
       if (!s) {
-        const tex = this.art.buildings[b.key];
-        if (!tex) continue;
-        s = new Sprite(tex);
+        s = new Sprite(frames[0]);
         const def = DEFS[b.key];
         s.width = def.w * TILE + 4;
         s.height = (def.h + LIFT) * TILE + 4;
@@ -125,6 +125,11 @@ export class Scene {
       }
       const def = DEFS[b.key];
       const d = dims(def, b.rot);
+      // Крутится, пока внутри есть гости (мотор и родник — всегда).
+      if (frames.length > 1) {
+        const active = !b.broken && (b.riders.length > 0 || ALWAYS_ANIMATED.has(b.key));
+        s.texture = active ? frames[Math.floor(game.time * 7) % frames.length] : frames[0];
+      }
       s.position.set(b.x * TILE - 2, (b.y + d.h - def.h - LIFT) * TILE - 2);
       s.zIndex = (b.y + d.h) * TILE;
       s.tint = b.broken ? 0x9a9a9a : 0xffffff;
@@ -132,10 +137,10 @@ export class Scene {
       const mark = this.doorMarks.get(b.id)!;
       mark.clear();
       if (def.cat !== 'decor') {
-        const dc = doorCell(def, b.x, b.y, b.rot);
-        mark
-          .roundRect(dc.x * TILE + 5, dc.y * TILE + 5, TILE - 10, TILE - 10, 4)
-          .stroke({ width: 2, color: C.bone, alpha: 0.75 });
+        const center = { x: b.x + d.w / 2, y: b.y + d.h / 2 };
+        drawGate(mark, doorCell(def, b.x, b.y, b.rot), true, center);
+        const ec = exitCell(def, b.x, b.y, b.rot);
+        if (ec) drawGate(mark, ec, false, center);
         mark.zIndex = (b.y + d.h) * TILE + 1;
       }
       if (b.broken) {
@@ -235,10 +240,10 @@ export class Scene {
         .fill({ color: g.ok ? 0x7dff6a : 0xff5a5a, alpha: 0.4 });
       return;
     }
-    const tex = this.art.buildings[g.def.key];
-    if (!tex) return;
+    const frames = this.art.buildings[g.def.key];
+    if (!frames) return;
     this.ghostSprite.visible = true;
-    this.ghostSprite.texture = tex;
+    this.ghostSprite.texture = frames[0];
     this.ghostSprite.width = g.def.w * TILE + 4;
     this.ghostSprite.height = (g.def.h + LIFT) * TILE + 4;
     this.ghostSprite.position.set(g.x * TILE - 2, (g.y + d.h - g.def.h - LIFT) * TILE - 2);
@@ -249,7 +254,13 @@ export class Scene {
     const dc = doorCell(g.def, g.x, g.y, g.rot);
     this.overlay
       .rect(dc.x * TILE + 3, dc.y * TILE + 3, TILE - 6, TILE - 6)
-      .stroke({ width: 3, color: 0xffffff, alpha: 0.9 });
+      .stroke({ width: 3, color: 0xffffff, alpha: 0.95 });
+    const ec = exitCell(g.def, g.x, g.y, g.rot);
+    if (ec) {
+      this.overlay
+        .rect(ec.x * TILE + 3, ec.y * TILE + 3, TILE - 6, TILE - 6)
+        .stroke({ width: 3, color: 0x8bf05a, alpha: 0.95 });
+    }
   }
 
   render(game: Game): void {
@@ -305,6 +316,41 @@ export class Scene {
     this.cam.zoom = Math.max(0.55, Math.min(1.3, this.screenW / (16 * TILE)));
     this.centerOn(ENTRY.x, MAP_H - 7);
   }
+}
+
+/**
+ * Вход — светлая рамка со стрелкой внутрь постройки, выход — зелёная со стрелкой
+ * наружу, к дороге. Направление считаем от клетки к центру постройки.
+ */
+function drawGate(
+  g: Graphics,
+  cell: { x: number; y: number },
+  isDoor: boolean,
+  center: { x: number; y: number },
+): void {
+  const x = cell.x * TILE;
+  const y = cell.y * TILE;
+  const color = isDoor ? C.bone : 0x8bf05a;
+  g.roundRect(x + 5, y + 5, TILE - 10, TILE - 10, 4).stroke({ width: 2, color, alpha: 0.8 });
+  const cx = x + TILE / 2;
+  const cy = y + TILE / 2;
+  let vx = center.x - (cell.x + 0.5);
+  let vy = center.y - (cell.y + 0.5);
+  const len = Math.hypot(vx, vy) || 1;
+  vx /= len;
+  vy /= len;
+  if (!isDoor) {
+    vx = -vx;
+    vy = -vy;
+  }
+  const tipX = cx + vx * 6;
+  const tipY = cy + vy * 6;
+  g.moveTo(cx - vx * 6, cy - vy * 6)
+    .lineTo(tipX, tipY)
+    .moveTo(tipX - vx * 4 - vy * 3.5, tipY - vy * 4 + vx * 3.5)
+    .lineTo(tipX, tipY)
+    .lineTo(tipX - vx * 4 + vy * 3.5, tipY - vy * 4 - vx * 3.5)
+    .stroke({ width: 2, color, alpha: 0.9 });
 }
 
 export function buildingLabel(b: Building): string {

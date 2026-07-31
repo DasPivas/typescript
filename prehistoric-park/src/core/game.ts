@@ -2,7 +2,9 @@ import { DEFS, PATROL_STAFF, STAFF } from './catalog';
 import {
   canPlace,
   canPlaceRoad,
+  doorCell,
   doorRoad,
+  exitRoad,
   ENTRY,
   MAP_H,
   MAP_W,
@@ -83,6 +85,9 @@ export class Game {
     ridesTaken: 0,
   };
 
+  /** Звуковые события наружу — ядро само ничего не проигрывает. */
+  onEvent: ((e: string) => void) | null = null;
+
   private nextId = 1;
   private spawnAcc = 0;
   private ratingAcc = 0;
@@ -113,6 +118,10 @@ export class Game {
     return this.buildings.find((b) => b.id === id) ?? null;
   }
 
+  private emit(e: string): void {
+    this.onEvent?.(e);
+  }
+
   toast(text: string): void {
     if (this.toasts.some((t) => t.text === text)) return;
     this.toasts.push({ text, life: 3.2 });
@@ -132,11 +141,13 @@ export class Game {
     if (def.cat === 'road') return this.buildRoad(key === 'road_stone' ? 2 : 1, x, y);
     if (this.money < def.cost) {
       this.toast('не хватает денег');
+      this.emit('error');
       return false;
     }
     const check = canPlace(this.map, def, x, y, rot);
     if (!check.ok) {
       this.toast(check.reason ?? 'сюда нельзя');
+      this.emit('error');
       return false;
     }
     const b: Building = {
@@ -160,6 +171,7 @@ export class Game {
     this.money -= def.cost;
     this.stats.expense += def.cost;
     recalcFields(this.map, this.buildings);
+    this.emit('build');
     return true;
   }
 
@@ -180,7 +192,14 @@ export class Game {
     this.money -= def.cost;
     this.stats.expense += def.cost;
     recalcFields(this.map, this.buildings);
+    this.dropQueueSlots();
+    this.emit('build');
     return true;
+  }
+
+  /** Дороги изменились — маршрут очереди надо пересчитать. */
+  private dropQueueSlots(): void {
+    for (const b of this.buildings) b.slots = undefined;
   }
 
   /** Снос: половина стоимости возвращается. */
@@ -206,6 +225,7 @@ export class Game {
       }
       const kind = this.map.roadAt(x, y);
       this.map.road[this.map.idx(x, y)] = 0;
+      this.dropQueueSlots();
       this.money += Math.floor((kind === 2 ? DEFS.road_stone.cost : DEFS.road_dirt.cost) / 2);
       recalcFields(this.map, this.buildings);
       return true;
@@ -328,6 +348,7 @@ export class Game {
       if (this.brokeMonths >= 3) {
         this.status = 'lost';
         this.toast('вы проиграли!');
+        this.emit('lose');
         return;
       }
       this.toast('баланс очень низок. восстановите его за 3 месяца');
@@ -338,6 +359,7 @@ export class Game {
     if (limit && this.month >= limit && this.status === 'playing') {
       this.status = 'lost';
       this.toast('время вышло');
+      this.emit('lose');
     }
   }
 
@@ -372,6 +394,7 @@ export class Game {
     if (ok) {
       this.status = 'won';
       this.toast('поздравляем!');
+      this.emit('win');
     }
   }
 
@@ -400,6 +423,7 @@ export class Game {
       }
 
       if (!this.isOperating(b)) continue;
+      let moved = false;
       while (b.riders.length < (def.capacity ?? 1) && b.queue.length) {
         const vid = b.queue.shift()!;
         const v = this.visitors.find((o) => o.id === vid);
@@ -417,11 +441,15 @@ export class Game {
         this.stats.income += b.price;
         b.revenue += b.price;
         b.uses++;
+        this.emit(b.price > 0 ? 'coin' : 'click');
+        if (def.cat === 'ride') this.emit('ride');
         v.state = 'busy';
         v.busyLeft = def.duration ?? 5;
         b.riders.push({ vid: v.id, left: v.busyLeft });
         this.wear(b);
+        moved = true;
       }
+      if (moved) this.repositionQueue(b);
     }
   }
 
@@ -432,6 +460,7 @@ export class Game {
     if (b.condition < 45 && this.rnd() < (45 - b.condition) / 45 / 22) {
       b.broken = true;
       b.condition = Math.max(5, b.condition);
+      this.emit('break');
       for (const vid of b.queue) {
         const v = this.visitors.find((o) => o.id === vid);
         if (v) {
@@ -471,8 +500,8 @@ export class Game {
       v.mood = clamp(v.mood + 4 + delta);
     }
 
-    // Выходим на дорогу у входа объекта.
-    const road = doorRoad(this.map, def, b.x, b.y, b.rot);
+    // Выходим на дорогу у выхода объекта (у аттракционов он отдельный).
+    const road = exitRoad(this.map, def, b.x, b.y, b.rot);
     if (road) {
       v.x = road.x + 0.5;
       v.y = road.y + 0.5;
@@ -550,9 +579,11 @@ export class Game {
           break;
         case 'queue':
           v.waited += dt;
-          if (v.waited > 45) {
-            v.mood -= 6;
-            v.waited = 0;
+          if (v.waited > 55) {
+            // «Устал стоять в очередях» — уходим искать другое занятие.
+            this.leaveQueue(v);
+            v.mood -= 12;
+            v.wish = 'sad';
           }
           break;
         case 'fighting':
@@ -715,13 +746,80 @@ export class Game {
     v.state = 'queue';
     v.waited = 0;
     b.queue.push(v.id);
-    // Расставляем очередь у входа, иначе все стоят в одной точке.
-    const road = doorRoad(this.map, DEFS[b.key], b.x, b.y, b.rot);
-    if (road) {
-      const i = b.queue.length - 1;
-      v.x = road.x + 0.5 + ((i % 4) - 1.5) * 0.22;
-      v.y = road.y + 0.5 + Math.floor(i / 4) * 0.26 - 0.2;
+    this.placeInQueue(v, b, b.queue.length - 1);
+  }
+
+  /**
+   * Клетки, по которым тянется очередь: от дороги у входа и дальше вдоль дороги,
+   * прочь от постройки. Считается один раз и живёт до перестройки дорог.
+   */
+  private queueSlots(b: Building): { x: number; y: number }[] {
+    if (b.slots) return b.slots;
+    const def = DEFS[b.key];
+    const road = doorRoad(this.map, def, b.x, b.y, b.rot);
+    if (!road) {
+      b.slots = [];
+      return b.slots;
     }
+    const door = doorCell(def, b.x, b.y, b.rot);
+    const slots = [road];
+    let prev = door;
+    let cur = road;
+    for (let i = 0; i < 5; i++) {
+      // Сначала пробуем идти прямо, потом вбок.
+      const dx = cur.x - prev.x;
+      const dy = cur.y - prev.y;
+      const cands = [
+        { x: cur.x + dx, y: cur.y + dy },
+        { x: cur.x + dy, y: cur.y + dx },
+        { x: cur.x - dy, y: cur.y - dx },
+      ];
+      const next = cands.find(
+        (c) =>
+          this.map.roadAt(c.x, c.y) > 0 && !slots.some((s) => s.x === c.x && s.y === c.y),
+      );
+      if (!next) break;
+      slots.push(next);
+      prev = cur;
+      cur = next;
+    }
+    b.slots = slots;
+    return slots;
+  }
+
+  /** Поставить гостя на своё место в ленте очереди (по два человека на клетку). */
+  private placeInQueue(v: Visitor, b: Building, index: number): void {
+    const slots = this.queueSlots(b);
+    if (!slots.length) return;
+    const cell = slots[Math.min(Math.floor(index / 2), slots.length - 1)];
+    const side = index % 2 === 0 ? -0.22 : 0.22;
+    const depth = Math.max(0, Math.floor(index / 2) - (slots.length - 1)) * 0.18;
+    v.x = cell.x + 0.5 + side;
+    v.y = cell.y + 0.5 + depth;
+  }
+
+  /** Очередь сдвинулась — подтягиваем всех вперёд. */
+  private repositionQueue(b: Building): void {
+    for (let i = 0; i < b.queue.length; i++) {
+      const v = this.visitors.find((o) => o.id === b.queue[i]);
+      if (v && v.state === 'queue') this.placeInQueue(v, b, i);
+    }
+  }
+
+  /** Выдернуть гостя из очереди, где бы он ни стоял. */
+  private leaveQueue(v: Visitor): void {
+    for (const b of this.buildings) {
+      const i = b.queue.indexOf(v.id);
+      if (i >= 0) {
+        b.queue.splice(i, 1);
+        this.repositionQueue(b);
+        break;
+      }
+    }
+    v.state = 'walking';
+    v.targetId = null;
+    v.waited = 0;
+    v.think = 0;
   }
 
   private stepWalk(v: Visitor, dt: number): void {

@@ -1,6 +1,8 @@
 import { ALL_DEFS, CATEGORY_NAMES, DEFS, PATROL_STAFF, STAFF } from '../core/catalog';
 import { fairPrice, serveNeed, type Game } from '../core/game';
 import { LEVELS } from '../core/levels';
+import { TUTORIAL, type TutorialStep } from '../core/tutorial';
+import { sound } from '../audio/sound';
 import type { Building, Category, Rot } from '../core/types';
 
 export interface AppApi {
@@ -61,13 +63,24 @@ export class UI {
   private hint = el('div', 'hint');
   private modalHost = el('div');
   private picked = el('div', 'picked');
+  private tutorial = el('div', 'tutorial');
   private tab: Category = 'road';
   private buildOpen = false;
 
   constructor(root: HTMLElement, app: AppApi) {
     this.root = root;
     this.app = app;
-    root.append(this.hud, this.hint, this.toasts, this.picked, this.dock, this.build, this.modalHost);
+    root.append(
+      this.hud,
+      this.tutorial,
+      this.hint,
+      this.toasts,
+      this.picked,
+      this.dock,
+      this.build,
+      this.modalHost,
+    );
+    this.tutorial.style.display = 'none';
     this.buildDock();
     this.buildPanel();
     this.renderTabs();
@@ -112,6 +125,17 @@ export class UI {
       this.refreshHint();
     };
     this.picked.append(cancel);
+  }
+
+  /** Полоска обучения под верхней панелью. */
+  setTutorial(step: TutorialStep | null, index: number, total: number): void {
+    if (!step) {
+      this.tutorial.style.display = 'none';
+      return;
+    }
+    this.tutorial.style.display = 'block';
+    this.tutorial.innerHTML =
+      `<b>шаг ${index + 1}/${total} — ${step.title}</b><span>${step.text}</span>`;
   }
 
   // ─────────── постоянные элементы ───────────
@@ -486,6 +510,16 @@ export class UI {
     body.append(
       el('div', 'row', `<span>уровень</span><b>${this.app.game.level.name}</b>`),
     );
+    const srow = el('div', 'row');
+    srow.innerHTML = '<span>звук</span>';
+    const sb = el('button', sound.enabled ? 'on' : undefined, sound.enabled ? 'включён' : 'выключен');
+    sb.onclick = () => {
+      sound.setEnabled(!sound.enabled);
+      sb.textContent = sound.enabled ? 'включён' : 'выключен';
+      sb.className = sound.enabled ? 'on' : '';
+    };
+    srow.append(sb);
+    body.append(srow);
     this.modal('меню', body, [
       ['сохранить', () => {
         this.app.save();
@@ -509,6 +543,12 @@ export class UI {
 
   openLevels(): void {
     const body = el('div', 'level-list');
+    const tb = el('button', undefined, `${TUTORIAL.name}<small>как всё устроено, за семь шагов</small>`);
+    tb.onclick = () => {
+      this.closeModal();
+      this.app.startLevel(TUTORIAL.key);
+    };
+    body.append(tb);
     for (const l of LEVELS) {
       const done = this.app.levelDone(l.key);
       const b = el(
@@ -536,6 +576,24 @@ export class UI {
           }]] as [string, () => void][])
         : []),
       ['помощь', () => this.openHelp()],
+    ]);
+  }
+
+  /** «включить звук?» — как в оригинале, один раз при первом запуске. */
+  askSound(then: () => void): void {
+    const body = el('div');
+    body.append(el('p', undefined, 'Музыка и эффекты синтезируются на лету. Включить?'));
+    this.modal('включить звук?', body, [
+      ['да', () => {
+        sound.setEnabled(true);
+        this.closeModal();
+        then();
+      }],
+      ['нет', () => {
+        sound.setEnabled(false);
+        this.closeModal();
+        then();
+      }],
     ]);
   }
 

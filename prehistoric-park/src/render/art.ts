@@ -13,7 +13,8 @@ export interface Art {
   rock: Texture;
   roadDirt: Texture;
   roadStone: Texture;
-  buildings: Record<string, Texture>;
+  /** Кадры анимации; у статичных построек в массиве один элемент. */
+  buildings: Record<string, Texture[]>;
   /** [оттенок][кадр] */
   visitor: Texture[][];
   staff: Record<string, Texture>;
@@ -21,13 +22,29 @@ export interface Art {
   entrance: Texture;
 }
 
-type Draw = (g: Graphics, w: number, h: number) => void;
+/** t — фаза анимации 0..1; статичные постройки её игнорируют. */
+type Draw = (g: Graphics, w: number, h: number, t: number) => void;
+
+/** Сколько кадров печь для постройки. 1 — статичная картинка. */
+const FRAMES: Record<string, number> = {
+  karusel: 8,
+  koleso: 8,
+  kacheli: 6,
+  batut: 4,
+  tarzanka: 6,
+  gorki: 8,
+  dinomotor: 8,
+  istochnik: 4,
+};
+
+/** Эти крутятся всегда, а не только когда внутри есть гости. */
+export const ALWAYS_ANIMATED = new Set(['dinomotor', 'istochnik']);
 
 const line = { width: 2, color: C.outline, alignment: 0.5 } as const;
 
-function bake(renderer: Renderer, w: number, h: number, draw: Draw, pad = 2): Texture {
+function bake(renderer: Renderer, w: number, h: number, draw: Draw, pad = 2, t = 0): Texture {
   const g = new Graphics();
-  draw(g, w, h);
+  draw(g, w, h, t);
   const rt = RenderTexture.create({
     width: w + pad * 2,
     height: h + pad * 2,
@@ -98,24 +115,31 @@ function hut(g: Graphics, w: number, h: number, roof: number): void {
 }
 
 const BUILDING_DRAW: Record<string, Draw> = {
-  batut: (g, w, h) => {
+  batut: (g, w, h, t) => {
     base(g, w, h, C.woodDark);
-    g.ellipse(w / 2, h * 0.55, w * 0.4, h * 0.26).fill(C.cloth).stroke(line);
-    g.ellipse(w / 2, h * 0.55, w * 0.28, h * 0.17).fill(C.cloth2);
+    // Полотно прогибается, над ним подпрыгивает фигурка.
+    const dip = Math.sin(t * Math.PI * 2) * h * 0.03;
+    g.ellipse(w / 2, h * 0.55 + dip, w * 0.4, h * 0.26 - dip).fill(C.cloth).stroke(line);
+    g.ellipse(w / 2, h * 0.55 + dip, w * 0.28, h * 0.17).fill(C.cloth2);
+    const jump = Math.max(0, Math.sin(t * Math.PI * 2)) * h * 0.22;
+    g.circle(w * 0.5, h * 0.42 - jump, w * 0.07).fill(C.skin).stroke({ width: 1.2, color: C.outline });
     g.moveTo(w * 0.16, h * 0.62).lineTo(w * 0.2, h * 0.92);
     g.moveTo(w * 0.84, h * 0.62).lineTo(w * 0.8, h * 0.92);
     g.stroke({ width: 3, color: C.wood });
   },
-  kacheli: (g, w, h) => {
+  kacheli: (g, w, h, t) => {
     base(g, w, h, C.grass2);
     g.moveTo(w * 0.18, h * 0.95).lineTo(w * 0.34, h * 0.2).lineTo(w * 0.5, h * 0.95);
     g.moveTo(w * 0.5, h * 0.95).lineTo(w * 0.66, h * 0.2).lineTo(w * 0.82, h * 0.95);
     g.stroke({ width: 4, color: C.wood });
     g.moveTo(w * 0.34, h * 0.2).lineTo(w * 0.66, h * 0.2).stroke({ width: 4, color: C.woodDark });
-    g.moveTo(w * 0.44, h * 0.22).lineTo(w * 0.44, h * 0.62);
-    g.moveTo(w * 0.58, h * 0.22).lineTo(w * 0.58, h * 0.62);
+    // Сиденье качается влево-вправо.
+    const sw = Math.sin(t * Math.PI * 2) * w * 0.12;
+    const drop = h * 0.4 - Math.abs(sw) * 0.35;
+    g.moveTo(w * 0.44, h * 0.22).lineTo(w * 0.44 + sw, h * 0.22 + drop);
+    g.moveTo(w * 0.58, h * 0.22).lineTo(w * 0.58 + sw, h * 0.22 + drop);
     g.stroke({ width: 2, color: C.bone });
-    g.roundRect(w * 0.4, h * 0.6, w * 0.22, h * 0.07, 2).fill(C.wood).stroke(line);
+    g.roundRect(w * 0.4 + sw, h * 0.2 + drop, w * 0.22, h * 0.07, 2).fill(C.wood).stroke(line);
   },
   tir: (g, w, h) => {
     base(g, w, h, C.wood);
@@ -125,12 +149,12 @@ const BUILDING_DRAW: Record<string, Draw> = {
     g.circle(w * 0.68, h * 0.28, w * 0.1).fill(C.bone).stroke(line);
     g.circle(w * 0.68, h * 0.28, w * 0.05).fill(C.red);
   },
-  karusel: (g, w, h) => {
+  karusel: (g, w, h, t) => {
     g.ellipse(w / 2, h - 5, w * 0.42, h * 0.1).fill({ color: C.shadow, alpha: 0.2 });
     g.ellipse(w / 2, h * 0.78, w * 0.42, h * 0.14).fill(C.sand).stroke(line);
     g.moveTo(w / 2, h * 0.78).lineTo(w / 2, h * 0.22).stroke({ width: 4, color: C.wood });
     for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
+      const a = (i / 6) * Math.PI * 2 + t * Math.PI * 2;
       const x = w / 2 + Math.cos(a) * w * 0.33;
       const y = h * 0.66 + Math.sin(a) * h * 0.1;
       g.circle(x, y, w * 0.07).fill(i % 2 ? C.yellow : C.red).stroke(line);
@@ -143,15 +167,18 @@ const BUILDING_DRAW: Record<string, Draw> = {
     g.poly(pts).fill(C.red).stroke(line);
     g.ellipse(w / 2, h * 0.32, w * 0.24, h * 0.06).fill(C.yellow);
   },
-  tarzanka: (g, w, h) => {
+  tarzanka: (g, w, h, t) => {
     base(g, w, h, C.grass2);
     g.poly([w * 0.3, h * 0.95, w * 0.42, h * 0.1, w * 0.58, h * 0.1, w * 0.7, h * 0.95])
       .fill(C.wood)
       .stroke(line);
+    const sw = Math.sin(t * Math.PI * 2);
+    const ex = w * (0.62 + sw * 0.18);
+    const ey = h * (0.75 - Math.abs(sw) * 0.12);
     g.moveTo(w * 0.5, h * 0.12)
-      .bezierCurveTo(w * 0.85, h * 0.3, w * 0.8, h * 0.6, w * 0.62, h * 0.75)
+      .bezierCurveTo(w * 0.85, h * 0.3, w * 0.8, h * 0.6, ex, ey)
       .stroke({ width: 3, color: C.leafDark });
-    g.circle(w * 0.62, h * 0.78, w * 0.06).fill(C.fur).stroke(line);
+    g.circle(ex, ey + h * 0.03, w * 0.06).fill(C.fur).stroke(line);
   },
   strah: (g, w, h) => {
     g.ellipse(w / 2, h - 5, w * 0.44, h * 0.1).fill({ color: C.shadow, alpha: 0.2 });
@@ -162,7 +189,7 @@ const BUILDING_DRAW: Record<string, Draw> = {
     g.circle(w * 0.55, h * 0.48, w * 0.026).fill(C.outline);
     g.rect(w * 0.44, h * 0.56, w * 0.12, w * 0.03).fill(C.outline);
   },
-  koleso: (g, w, h) => {
+  koleso: (g, w, h, t) => {
     g.ellipse(w / 2, h - 5, w * 0.36, h * 0.08).fill({ color: C.shadow, alpha: 0.2 });
     g.moveTo(w * 0.28, h * 0.95).lineTo(w * 0.5, h * 0.55).lineTo(w * 0.72, h * 0.95);
     g.stroke({ width: 5, color: C.wood });
@@ -170,20 +197,21 @@ const BUILDING_DRAW: Record<string, Draw> = {
     const cy = h * 0.45;
     const r = Math.min(w, h) * 0.4;
     g.circle(cx, cy, r).stroke({ width: 4, color: C.woodDark });
+    const spin = t * Math.PI * 2;
     for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
+      const a = (i / 8) * Math.PI * 2 + spin;
       g.moveTo(cx, cy).lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
     }
     g.stroke({ width: 2, color: C.wood });
     for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
+      const a = (i / 8) * Math.PI * 2 + spin;
       g.circle(cx + Math.cos(a) * r, cy + Math.sin(a) * r, r * 0.13)
         .fill(i % 2 ? C.red : C.yellow)
         .stroke(line);
     }
     g.circle(cx, cy, r * 0.12).fill(C.bone).stroke(line);
   },
-  gorki: (g, w, h) => {
+  gorki: (g, w, h, t) => {
     base(g, w, h, C.grass2);
     for (let i = 0; i < 5; i++) {
       const x = w * (0.14 + i * 0.18);
@@ -195,12 +223,26 @@ const BUILDING_DRAW: Record<string, Draw> = {
     g.moveTo(w * 0.06, h * 0.62)
       .bezierCurveTo(w * 0.3, h * 0.1, w * 0.55, h * 0.8, w * 0.96, h * 0.36)
       .stroke({ width: 3, color: C.wood });
-    g.roundRect(w * 0.2, h * 0.16, w * 0.14, h * 0.1, 3).fill(C.red).stroke(line);
+    // Вагонетка едет по кривой (та же безье, что и рельсы).
+    const bez = (p: number, a: number, b1: number, c: number, d: number) => {
+      const u = 1 - p;
+      return u * u * u * a + 3 * u * u * p * b1 + 3 * u * p * p * c + p * p * p * d;
+    };
+    const cx = bez(t, w * 0.06, w * 0.3, w * 0.55, w * 0.96);
+    const cy = bez(t, h * 0.58, h * 0.06, h * 0.76, h * 0.32);
+    g.roundRect(cx - w * 0.06, cy - h * 0.09, w * 0.13, h * 0.09, 3).fill(C.red).stroke(line);
   },
-  istochnik: (g, w, h) => {
+  istochnik: (g, w, h, t) => {
     g.ellipse(w / 2, h * 0.62, w * 0.36, h * 0.28).fill(C.rock).stroke(line);
     g.ellipse(w / 2, h * 0.6, w * 0.24, h * 0.18).fill(C.water);
-    g.ellipse(w * 0.44, h * 0.55, w * 0.08, h * 0.05).fill(C.waterLight);
+    // Круги по воде.
+    const r = 0.04 + t * 0.14;
+    g.ellipse(w / 2, h * 0.6, w * r, h * r * 0.7).stroke({
+      width: 1.5,
+      color: C.waterLight,
+      alpha: 1 - t,
+    });
+    g.ellipse(w * 0.44, h * 0.55, w * 0.06, h * 0.04).fill(C.waterLight);
   },
   tualet: (g, w, h) => {
     hut(g, w, h, C.leafDark);
@@ -223,14 +265,14 @@ const BUILDING_DRAW: Record<string, Draw> = {
     g.rect(w * 0.46, h * 0.22, w * 0.08, h * 0.16).fill(C.red);
     g.rect(w * 0.38, h * 0.27, w * 0.24, h * 0.06).fill(C.red);
   },
-  dinomotor: (g, w, h) => {
+  dinomotor: (g, w, h, t) => {
     base(g, w, h, C.woodDark);
     const cx = w * 0.5;
     const cy = h * 0.5;
     const r = Math.min(w, h) * 0.3;
     const pts: number[] = [];
     for (let i = 0; i < 24; i++) {
-      const a = (i / 24) * Math.PI * 2;
+      const a = (i / 24) * Math.PI * 2 + t * (Math.PI / 6);
       const rr = i % 2 === 0 ? r : r * 0.78;
       pts.push(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
     }
@@ -412,14 +454,15 @@ const WISH_DRAW: Record<string, Draw> = {
 // ───────────────────────── сборка ─────────────────────────
 
 export function buildArt(renderer: Renderer): Art {
-  const buildings: Record<string, Texture> = {};
+  const buildings: Record<string, Texture[]> = {};
   for (const def of ALL_DEFS) {
     if (def.cat === 'road') continue;
     const draw = BUILDING_DRAW[def.key];
     if (!draw) continue;
     const w = def.w * TILE;
     const h = Math.round((def.h + LIFT) * TILE);
-    buildings[def.key] = bake(renderer, w, h, draw);
+    const n = FRAMES[def.key] ?? 1;
+    buildings[def.key] = Array.from({ length: n }, (_, i) => bake(renderer, w, h, draw, 2, i / n));
   }
 
   const visitor = VISITOR_TINTS.map((t) => [0, 1, 2].map((f) => bake(renderer, 14, 20, drawVisitor(t, f))));
