@@ -51,6 +51,36 @@ body {
   pointer-events: auto;
 }
 
+#boot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 40%, #3c5a24, #1d2a12 70%);
+  color: var(--bone);
+  z-index: 50;
+  transition: opacity 0.35s;
+}
+
+#boot b {
+  font-size: 24px;
+  color: var(--yellow);
+  letter-spacing: 0.5px;
+}
+
+#boot span {
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+#boot.gone {
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ─────────── верхняя панель ─────────── */
 
 .hud {

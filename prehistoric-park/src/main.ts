@@ -36,6 +36,13 @@ class App implements AppApi {
     this.makeIcons();
     this.profile = await store.loadProfile();
 
+    // Спрайты уже посчитаны — убираем заставку.
+    const splash = document.getElementById('boot');
+    if (splash) {
+      splash.classList.add('gone');
+      setTimeout(() => splash.remove(), 400);
+    }
+
     this.ui = new UI(document.getElementById('ui')!, this);
     new Controls(canvas, this.scene, {
       isPaintMode: () => this.selectedKey !== null && DEFS[this.selectedKey].cat === 'road',
@@ -401,4 +408,4 @@ const app = new App();
 void app.start();
 
 // Немного удобства при отладке в браузере.
-Object.assign(window as unknown as Record<string, unknown>, { pp: app, sound, ENTRY, MAP_H });
+Object.assign(window as unknown as Record<string, unknown>, { pp: app, sound, ENTRY, MAP_H, __defs: DEFS });
